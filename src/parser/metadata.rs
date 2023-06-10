@@ -1,11 +1,14 @@
 use bendy::{
-    decoding::{Error as DecError, FromBencode, Object, ResultExt},
+    decoding::{Decoder, Error as DecError, FromBencode, Object, ResultExt},
     encoding::{AsString, Error as EncError, SingleItemEncoder, ToBencode},
 };
 
-use crate::fileinfo::FileInfo;
+use sha1::{Digest, Sha1};
+use urlencoding::encode_binary;
 
-pub(crate) struct Info {
+use super::fileinfo::FileInfo;
+
+pub(crate) struct MetaData {
     pub files: Vec<FileInfo>,
     pub name: String,
     pub piece_length: u32,
@@ -13,7 +16,7 @@ pub(crate) struct Info {
     pub private: u32,
 }
 
-impl FromBencode for Info {
+impl FromBencode for MetaData {
     const EXPECTED_RECURSION_DEPTH: usize = 4;
 
     fn decode_bencode_object(object: Object) -> Result<Self, DecError>
@@ -46,13 +49,13 @@ impl FromBencode for Info {
                 }
                 (b"piece length", val) => {
                     piece_length = u32::decode_bencode_object(val)
-                    .context("piece length")
-                    .map(Some)?;
+                        .context("piece length")
+                        .map(Some)?;
                 }
                 (b"private", val) => {
                     private = u32::decode_bencode_object(val)
-                    .context("private")
-                    .map(Some)?;
+                        .context("private")
+                        .map(Some)?;
                 }
                 _ => {
                     continue;
@@ -66,7 +69,7 @@ impl FromBencode for Info {
         let piece_length = piece_length.ok_or_else(|| DecError::missing_field("piece_length"))?;
         let private = private.ok_or_else(|| DecError::missing_field("private"))?;
 
-        Ok(Info {
+        Ok(MetaData {
             files,
             name,
             piece_length,
@@ -76,7 +79,7 @@ impl FromBencode for Info {
     }
 }
 
-impl ToBencode for Info {
+impl ToBencode for MetaData {
     const MAX_DEPTH: usize = 4;
 
     fn encode(&self, encoder: SingleItemEncoder) -> Result<(), EncError> {
@@ -90,4 +93,38 @@ impl ToBencode for Info {
 
         Ok(())
     }
+}
+
+pub(crate) fn read_metadata(path: &String) -> Result<MetaData, ()> {
+    let res = std::fs::read(path).expect("Failed to read file");
+
+    let mut dec = Decoder::new(&res).with_max_depth(5);
+
+    let mut dict = match dec.next_object().unwrap() {
+        Some(Object::Dict(d)) => d,
+        _ => return Err(()),
+    };
+
+    let info = loop {
+        match dict.next_pair().unwrap() {
+            Some((b"info", val)) => break MetaData::decode_bencode_object(val).unwrap(),
+            Some(_) => {
+                continue;
+            }
+            None => return Err(()),
+        };
+    };
+
+    Ok(info)
+}
+
+pub(crate) fn get_info_hash(info: &MetaData) -> Result<String, ()> {
+    let bytes = info.to_bencode().unwrap();
+
+    let mut hasher: Sha1 = Sha1::new();
+    hasher.update(bytes);
+    let sha_hex: Vec<u8> = hasher.finalize().to_vec();
+    let sha_url = encode_binary(&sha_hex);
+
+    Ok(sha_url.to_string())
 }
