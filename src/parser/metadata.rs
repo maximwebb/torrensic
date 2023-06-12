@@ -1,61 +1,44 @@
 use bendy::{
-    decoding::{Decoder, Error as DecError, FromBencode, Object, ResultExt},
-    encoding::{AsString, Error as EncError, SingleItemEncoder, ToBencode},
+    decoding::{Error as DecError, FromBencode, ResultExt},
+    encoding::{Error as EncError, ToBencode},
 };
 
 use sha1::{Digest, Sha1};
 use urlencoding::encode_binary;
 
-use super::fileinfo::FileInfo;
+use super::info::Info;
 
-pub(crate) struct MetaData {
-    pub files: Vec<FileInfo>,
-    pub name: String,
-    pub piece_length: u32,
-    pub pieces: Vec<u8>,
-    pub private: u32,
+pub(crate) struct Metadata {
+    pub announce: String,
+    pub announce_list: Vec<Vec<String>>,
+    pub info: Info,
 }
 
-impl FromBencode for MetaData {
-    const EXPECTED_RECURSION_DEPTH: usize = 4;
+impl FromBencode for Metadata {
+    const EXPECTED_RECURSION_DEPTH: usize = 5;
 
-    fn decode_bencode_object(object: Object) -> Result<Self, DecError>
+    fn decode_bencode_object(object: bendy::decoding::Object) -> Result<Self, DecError>
     where
         Self: Sized,
     {
-        let mut files: Option<Vec<FileInfo>> = None;
-        let mut name: Option<String> = None;
-        let mut pieces: Option<Vec<u8>> = None;
-        let mut piece_length: Option<u32> = None;
-        let mut private: Option<u32> = None;
+        let mut announce: Option<String> = None;
+        let mut announce_list: Option<Vec<Vec<String>>> = None;
+        let mut info: Option<Info> = None;
 
-        let mut dict = match object.try_into_dictionary() {
-            Ok(v) => v,
-            Err(e) => {
-                return Err(e);
-            }
-        };
+        let mut dict = object.try_into_dictionary()?;
 
-        while let Some(pair) = dict.next_pair().unwrap() {
+        while let Some(pair) = dict.next_pair()? {
             match pair {
-                (b"files", val) => {
-                    files = Vec::decode_bencode_object(val).ok();
+                (b"announce", val) => {
+                    announce = String::decode_bencode_object(val).context("announce").ok();
                 }
-                (b"name", val) => {
-                    name = String::decode_bencode_object(val).ok();
+                (b"announce-list", val) => {
+                    announce_list = Vec::decode_bencode_object(val)
+                        .context("announce-list")
+                        .ok();
                 }
-                (b"pieces", val) => {
-                    pieces = val.try_into_bytes().map(Vec::from).map(Some)?;
-                }
-                (b"piece length", val) => {
-                    piece_length = u32::decode_bencode_object(val)
-                        .context("piece length")
-                        .map(Some)?;
-                }
-                (b"private", val) => {
-                    private = u32::decode_bencode_object(val)
-                        .context("private")
-                        .map(Some)?;
+                (b"info", val) => {
+                    info = Info::decode_bencode_object(val).context("info").ok();
                 }
                 _ => {
                     continue;
@@ -63,63 +46,42 @@ impl FromBencode for MetaData {
             }
         }
 
-        let files = files.ok_or_else(|| DecError::missing_field("files"))?;
-        let name = name.ok_or_else(|| DecError::missing_field("name"))?;
-        let pieces = pieces.ok_or_else(|| DecError::missing_field("pieces"))?;
-        let piece_length = piece_length.ok_or_else(|| DecError::missing_field("piece_length"))?;
-        let private = private.ok_or_else(|| DecError::missing_field("private"))?;
+        let announce = announce.ok_or_else(|| DecError::missing_field("announce"))?;
+        let announce_list =
+            announce_list.ok_or_else(|| DecError::missing_field("announce-list"))?;
+        let info = info.ok_or_else(|| DecError::missing_field("info"))?;
 
-        Ok(MetaData {
-            files,
-            name,
-            piece_length,
-            pieces,
-            private,
+        Ok(Metadata {
+            announce,
+            announce_list,
+            info,
         })
     }
 }
 
-impl ToBencode for MetaData {
-    const MAX_DEPTH: usize = 4;
+impl ToBencode for Metadata {
+    const MAX_DEPTH: usize = 5;
 
-    fn encode(&self, encoder: SingleItemEncoder) -> Result<(), EncError> {
+    fn encode(&self, encoder: bendy::encoding::SingleItemEncoder) -> Result<(), EncError> {
         encoder.emit_dict(|mut e| {
-            e.emit_pair(b"files", &self.files)?;
-            e.emit_pair(b"name", &self.name)?;
-            e.emit_pair(b"piece length", &self.piece_length)?;
-            e.emit_pair(b"pieces", AsString(&self.pieces))?;
-            e.emit_pair(b"private", &self.private)
+            e.emit_pair(b"announce", &self.announce)?;
+            e.emit_pair(b"announce-list", &self.announce_list)?;
+            e.emit_pair(b"info", &self.info)
         })?;
 
         Ok(())
     }
 }
 
-pub(crate) fn read_metadata(path: &String) -> Result<MetaData, ()> {
+pub(crate) fn read_metadata(path: &String) -> Result<Metadata, DecError> {
     let res = std::fs::read(path).expect("Failed to read file");
+    let metadata = Metadata::from_bencode(&res)?;
 
-    let mut dec = Decoder::new(&res).with_max_depth(5);
-
-    let mut dict = match dec.next_object().unwrap() {
-        Some(Object::Dict(d)) => d,
-        _ => return Err(()),
-    };
-
-    let info = loop {
-        match dict.next_pair().unwrap() {
-            Some((b"info", val)) => break MetaData::decode_bencode_object(val).unwrap(),
-            Some(_) => {
-                continue;
-            }
-            None => return Err(()),
-        };
-    };
-
-    Ok(info)
+    Ok(metadata)
 }
 
-pub(crate) fn get_info_hash(info: &MetaData) -> Result<String, ()> {
-    let bytes = info.to_bencode().unwrap();
+pub(crate) fn get_info_hash(metadata: &Metadata) -> Result<String, EncError> {
+    let bytes = metadata.info.to_bencode()?;
 
     let mut hasher: Sha1 = Sha1::new();
     hasher.update(bytes);

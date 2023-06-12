@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 bendy = "0.3.3"
+reqwest = { version = "0.11.18", features = ["default-tls", "multipart"] }
 sha1 = "0.10.5"
 tokio = { version = "1.28.2", features = ["full"] }
 urlencoding = "2.1.2"
