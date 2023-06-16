@@ -6,11 +6,11 @@ use tokio;
 use parser::metadata::read_metadata;
 
 use client::message::{
-    have::Have, interested::Interested, keep_alive::KeepAlive, not_interested::NotInterested,
-    request::Request, PeerWireMessage,
+    choke::Choke, have::Have, interested::Interested, keep_alive::KeepAlive,
+    not_interested::NotInterested, parse, request::Request, Message, PeerWireMessage,
 };
 
-use crate::client::message::{parse, Message};
+use crate::client::message::{bitfield::Bitfield, cancel::Cancel, piece::Piece, unchoke::Unchoke};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -25,42 +25,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //     client::peer_wire::handshake(&peer, md).await?;
     // }
 
-    let have = Have { piece_index: 420 };
-    let interested = Interested {};
-    let keep_alive = KeepAlive {};
-    let not_interested = NotInterested {};
-    let request = Request {
+    let keep_alive = Message::from(KeepAlive {});
+    let choke = Message::from(Choke {});
+    let unchoke = Message::from(Unchoke {});
+    let interested = Message::from(Interested {});
+    let not_interested = Message::from(NotInterested {});
+    let have = Message::from(Have { piece_index: 420 });
+    let bitfield = Message::from(Bitfield {
+        bitfield: vec![1, 2, 3, 4, 5, 6],
+    });
+    let request = Message::from(Request {
         index: 42,
         begin: 33,
         length: 99,
-    };
-
-    let have_res = parse(have.serialise()).unwrap();
-    let interested_res = parse(interested.serialise()).unwrap();
-    let keep_alive_res = parse(keep_alive.serialise()).unwrap();
-    let not_interested_res = parse(not_interested.serialise()).unwrap();
-    let request_res = parse(request.serialise()).unwrap();
+    });
+    let piece = Message::from(Piece {
+        index: 69,
+        begin: 420,
+        block: vec![3, 1, 4, 1, 5, 9],
+    });
+    let cancel = Message::from(Cancel {
+        index: 43,
+        begin: 34,
+        length: 100,
+    });
 
     let res = [
-        have_res,
-        interested_res,
-        keep_alive_res,
-        not_interested_res,
-        request_res,
-    ];
+        keep_alive,
+        choke,
+        unchoke,
+        interested,
+        not_interested,
+        have,
+        bitfield,
+        request,
+        piece,
+        cancel,
+    ]
+    .map(|msg| parse(msg.serialise()).unwrap());
     for msg in res {
         println!("{}", msg.print())
     }
-
-    // for msg in res {
-    //     match msg {
-    //         Message::KA(v) => println!("{}", v.print()),
-    //         Message::I(v) => println!("{}", v.print()),
-    //         Message::NI(v) => println!("{}", v.print()),
-    //         Message::H(v) => println!("{}", v.print()),
-    //         Message::R(v) => println!("{}", v.print()),
-    //     };
-    // }
-
     Ok(())
 }

@@ -1,19 +1,22 @@
-use std::fmt::Display;
-
 use byteorder::{BigEndian, ReadBytesExt};
 use enum_dispatch::enum_dispatch;
-use urlencoding::encode_binary;
 
 use self::{
-    have::Have, interested::Interested, keep_alive::KeepAlive, not_interested::NotInterested,
-    request::Request,
+    bitfield::Bitfield, cancel::Cancel, choke::Choke, have::Have, interested::Interested,
+    keep_alive::KeepAlive, not_interested::NotInterested, piece::Piece, request::Request,
+    unchoke::Unchoke,
 };
 
+pub mod bitfield;
+pub mod cancel;
+pub mod choke;
 pub mod have;
 pub mod interested;
 pub mod keep_alive;
 pub mod not_interested;
+pub mod piece;
 pub mod request;
+pub mod unchoke;
 
 #[enum_dispatch]
 pub trait PeerWireMessage {
@@ -61,10 +64,15 @@ pub trait PeerWireMessage {
 #[enum_dispatch(PeerWireMessage)]
 pub enum Message {
     KeepAlive(KeepAlive),
+    Choke(Choke),
+    Unchoke(Unchoke),
     Interested(Interested),
     NotInterested(NotInterested),
     Have(Have),
+    Bitfield(Bitfield),
     Request(Request),
+    Piece(Piece),
+    Cancel(Cancel),
 }
 
 pub fn parse(raw: Vec<u8>) -> Result<Message, ()> {
@@ -75,34 +83,54 @@ pub fn parse(raw: Vec<u8>) -> Result<Message, ()> {
     let mut len_prefix: &[u8] = &raw[0..4];
     let len_prefix: u32 = len_prefix.read_u32::<BigEndian>().unwrap();
 
+    if len_prefix + 4 != raw.len().try_into().unwrap() {
+        return Err(());
+    }
+
     let id: u8 = match len_prefix {
         0 => return Ok(Message::from(KeepAlive {})),
         _ => raw[4],
     };
 
     match id {
+        0 => {
+            if len_prefix != 1 {
+                return Err(());
+            }
+            return Ok(Message::from(Choke {}));
+        }
+        1 => {
+            if len_prefix != 1 {
+                return Err(());
+            }
+            return Ok(Message::from(Unchoke {}));
+        }
         2 => {
-            if raw.len() != 5 {
+            if len_prefix != 1 {
                 return Err(());
             }
             return Ok(Message::from(Interested {}));
         }
         3 => {
-            if raw.len() != 5 {
+            if len_prefix != 1 {
                 return Err(());
             }
             return Ok(Message::from(NotInterested {}));
         }
         4 => {
-            if raw.len() != 9 {
+            if len_prefix != 5 {
                 return Err(());
             }
             let mut piece_index = &raw[5..9];
             let piece_index = piece_index.read_u32::<BigEndian>().unwrap();
             return Ok(Message::from(Have { piece_index }));
         }
+        5 => {
+            let bitfield = raw[5..].to_vec();
+            return Ok(Message::from(Bitfield { bitfield }));
+        }
         6 => {
-            if raw.len() != 17 {
+            if len_prefix != 13 {
                 return Err(());
             }
             let mut index = &raw[5..9];
@@ -119,8 +147,42 @@ pub fn parse(raw: Vec<u8>) -> Result<Message, ()> {
                 length,
             }));
         }
-        _ => (&raw[5..]).to_vec(),
-    };
+        7 => {
+            if len_prefix < 10 {
+                return Err(());
+            }
 
-    Err(())
+            let mut index = &raw[5..9];
+            let mut begin = &raw[9..13];
+            let block = raw[13..].to_vec();
+
+            let index = index.read_u32::<BigEndian>().unwrap();
+            let begin = begin.read_u32::<BigEndian>().unwrap();
+
+            return Ok(Message::from(Piece {
+                index,
+                begin,
+                block,
+            }));
+        }
+        8 => {
+            if len_prefix != 13 {
+                return Err(());
+            }
+            let mut index = &raw[5..9];
+            let mut begin = &raw[9..13];
+            let mut length = &raw[13..17];
+
+            let index = index.read_u32::<BigEndian>().unwrap();
+            let begin = begin.read_u32::<BigEndian>().unwrap();
+            let length = length.read_u32::<BigEndian>().unwrap();
+
+            return Ok(Message::from(Cancel {
+                index,
+                begin,
+                length,
+            }));
+        }
+        _ => Err(()),
+    }
 }
