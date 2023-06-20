@@ -9,7 +9,10 @@ edition = "2021"
 bendy = "0.3.3"
 byteorder = "1.4.3"
 enum_dispatch = "0.3.11"
+rand = "0.8.5"
 reqwest = { version = "0.11.18", features = ["default-tls", "multipart"] }
 sha1 = "0.10.5"
 tokio = { version = "1.28.2", features = ["full"] }
+trust-dns-resolver = "0.22.0"
+url = "2.4.0"
 urlencoding = "2.1.2"

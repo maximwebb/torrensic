@@ -1,6 +1,6 @@
 use bendy::{
     decoding::{Error as DecError, FromBencode, ResultExt},
-    encoding::{Error as EncError, ToBencode},
+    encoding::{Error as EncError, ToBencode, Encoder},
 };
 
 use sha1::{Digest, Sha1};
@@ -12,6 +12,7 @@ pub(crate) struct Metadata {
     pub announce: String,
     pub announce_list: Vec<Vec<String>>,
     pub info: Info,
+    pub info_hash: Vec<u8>,
 }
 
 impl FromBencode for Metadata {
@@ -24,6 +25,7 @@ impl FromBencode for Metadata {
         let mut announce: Option<String> = None;
         let mut announce_list: Option<Vec<Vec<String>>> = None;
         let mut info: Option<Info> = None;
+        let mut info_hash: Option<Vec<u8>> = None;
 
         let mut dict = object.try_into_dictionary()?;
 
@@ -38,7 +40,14 @@ impl FromBencode for Metadata {
                         .ok();
                 }
                 (b"info", val) => {
-                    info = Info::decode_bencode_object(val).context("info").ok();
+                    let raw = val.try_into_dictionary()?.into_raw()?;
+                    let mut hasher: Sha1 = Sha1::new();
+                    hasher.update(raw);
+                    info_hash = Some(hasher.finalize().to_vec());
+
+                    info = Info::from_bencode(raw)
+                        .context("info")
+                        .ok();
                 }
                 _ => {
                     continue;
@@ -50,11 +59,13 @@ impl FromBencode for Metadata {
         let announce_list =
             announce_list.ok_or_else(|| DecError::missing_field("announce-list"))?;
         let info = info.ok_or_else(|| DecError::missing_field("info"))?;
+        let info_hash = info_hash.ok_or_else(|| DecError::missing_field("info_hash"))?;
 
         Ok(Metadata {
             announce,
             announce_list,
             info,
+            info_hash
         })
     }
 }
@@ -80,7 +91,8 @@ pub(crate) fn read_metadata(path: &String) -> Result<Metadata, DecError> {
     Ok(metadata)
 }
 
-pub(crate) fn get_info_hash(metadata: &Metadata) -> Result<String, EncError> {
+//TODO: Directly compute info hash when computing metadata.
+pub(crate) fn get_urlenc_info_hash(metadata: &Metadata) -> Result<String, EncError> {
     let bytes = metadata.info.to_bencode()?;
 
     let mut hasher: Sha1 = Sha1::new();

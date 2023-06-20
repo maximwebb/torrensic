@@ -83,6 +83,10 @@ pub fn parse(raw: Vec<u8>) -> Result<Message, ()> {
     let mut len_prefix: &[u8] = &raw[0..4];
     let len_prefix: u32 = len_prefix.read_u32::<BigEndian>().unwrap();
 
+    if len_prefix > 200_000 {
+        return Err(());
+    }
+
     if len_prefix + 4 != raw.len().try_into().unwrap() {
         return Err(());
     }

@@ -17,14 +17,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let torrent_file: String = String::from("torrents/test.torrent");
     let md = &read_metadata(&torrent_file).unwrap();
 
-    let tracker_info = client::tracker::req_tracker_info(md).await?;
+    let tracker_info = if md.announce.starts_with("http") {
+        client::tracker::req_http_tracker_info(md).await?
+    } else {
+        client::tracker::req_udp_tracker_info(md).await?
+    };
 
     println!("Found {} peers.", { tracker_info.peers.len() });
 
-    // for peer in tracker_info.peers {
-    //     client::peer_wire::handshake(&peer, md).await?;
-    // }
+    for peer in tracker_info.peers {
+        let _ = client::peer_wire::run(&peer, md).await;
+    }
 
+    Ok(())
+}
+
+fn test_messages() {
     let keep_alive = Message::from(KeepAlive {});
     let choke = Message::from(Choke {});
     let unchoke = Message::from(Unchoke {});
@@ -66,5 +74,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     for msg in res {
         println!("{}", msg.print())
     }
-    Ok(())
 }

@@ -1,52 +1,47 @@
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpStream,
-};
-use urlencoding::decode_binary;
+use std::time::Duration;
 
-use crate::parser::{
-    metadata::{get_info_hash, Metadata},
-    trackerinfo::PeerInfo,
+use tokio::time::timeout;
+use tokio::{io::AsyncReadExt, net::TcpStream};
+
+use crate::client::message::{Message, PeerWireMessage};
+use crate::{
+    client::{handshake::handshake, message::parse},
+    parser::{metadata::Metadata, trackerinfo::PeerInfo},
 };
 
-pub(crate) async fn handshake(
-    peer: &PeerInfo,
-    md: &Metadata,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) async fn run(peer: &PeerInfo, md: &Metadata) -> Result<(), Box<dyn std::error::Error>> {
     let addr = format!("{}:{}", peer.ip, peer.port);
     println!("Connecting to {addr}");
-    let socket = TcpStream::connect(addr).await?;
+    let socket = TcpStream::connect(addr);
+    let socket = match timeout(Duration::from_millis(1000), socket).await {
+        Ok(v) => match v {
+            Ok(v) => v,
+            Err(e) => return Err(Box::new(e)),
+        },
+        Err(e) => return Err(Box::new(e)),
+    };
+
     let (mut rd, mut wr) = tokio::io::split(socket);
 
-    let pstr: Vec<u8> = b"BitTorrent protocol".to_vec();
-    let pstrlen: Vec<u8> = vec![pstr.len().try_into().unwrap()];
-    let reserved: Vec<u8> = vec![0; 8];
-    let info_hash: Vec<u8> = get_info_hash(&md).unwrap().as_bytes().to_vec();
-    let info_hash = decode_binary(&info_hash).to_vec();
-    let peer_id: Vec<u8> = b"-TO0000-0123456789AB".to_vec();
+    handshake(peer, md, &mut rd, &mut wr).await?;
 
-    let msg: Vec<u8> = [
-        pstrlen.as_slice(),
-        pstr.as_slice(),
-        reserved.as_slice(),
-        info_hash.as_slice(),
-        peer_id.as_slice(),
-    ]
-    .concat();
+    loop {
+        let mut buf = vec![0; 256];
+        let n = rd.read(&mut buf).await?;
+        let buf = buf[0..n].to_vec();
 
-    wr.write_all(&msg).await?;
-
-    let mut buf = vec![0; 256];
-    let n = rd.read(&mut buf).await?;
-    if n != 0 {
-        println!("Non-empty response");
+        let msg = match parse(buf) {
+            Ok(v) => v,
+            Err(_) => {
+                println!("Invalid message");
+                return Ok(());
+            }
+        };
+        println!("{}", msg.print());
+        match msg {
+            Message::Cancel(_) => return Ok(()),
+            Message::Choke(_) => return Ok(()),
+            _ => continue,
+        }
     }
-
-    let msg = String::from_utf8_lossy(&buf.to_vec())
-        .trim_matches(char::from(0))
-        .to_string();
-
-    println!("Received: {msg}");
-
-    Ok(())
 }

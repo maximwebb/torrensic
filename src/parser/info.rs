@@ -11,7 +11,7 @@ pub(crate) struct Info {
     pub name: String,
     pub piece_length: u32,
     pub pieces: Vec<u8>,
-    pub private: u32,
+    pub private: Option<u32>,
 }
 
 impl FromBencode for Info {
@@ -65,7 +65,6 @@ impl FromBencode for Info {
         let name = name.ok_or_else(|| DecError::missing_field("name"))?;
         let pieces = pieces.ok_or_else(|| DecError::missing_field("pieces"))?;
         let piece_length = piece_length.ok_or_else(|| DecError::missing_field("piece_length"))?;
-        let private = private.ok_or_else(|| DecError::missing_field("private"))?;
 
         Ok(Info {
             files,
@@ -86,7 +85,10 @@ impl ToBencode for Info {
             e.emit_pair(b"name", &self.name)?;
             e.emit_pair(b"piece length", &self.piece_length)?;
             e.emit_pair(b"pieces", AsString(&self.pieces))?;
-            e.emit_pair(b"private", &self.private)
+            match &self.private {
+                Some(private) => e.emit_pair(b"private", private),
+                None => Ok({}),
+            }
         })?;
 
         Ok(())
