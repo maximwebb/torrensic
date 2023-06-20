@@ -13,10 +13,32 @@ use crate::parser::{
     trackerinfo::TrackerInfo,
 };
 
-pub(crate) async fn req_http_tracker_info(
+pub(crate) async fn req_tracker_info(
     md: &Metadata,
 ) -> Result<TrackerInfo, Box<dyn std::error::Error>> {
-    let tracker_url = &md.announce;
+    for tracker in &md.announce_list {
+        let tracker = &tracker[0];
+        let req = if tracker.starts_with("http") {
+            req_http_tracker_info(tracker, md).await
+        } else {
+            req_udp_tracker_info(tracker, md).await
+        };
+
+        match req {
+            Ok(tracker_info) => return Ok(tracker_info),
+            Err(_) => continue,
+        }
+    }
+    return Err(Box::new(IOError::new(
+        ErrorKind::NotConnected,
+        "Failed to retrieve tracker info",
+    )));
+}
+
+async fn req_http_tracker_info(
+    tracker_url: &String,
+    md: &Metadata,
+) -> Result<TrackerInfo, Box<dyn std::error::Error>> {
     let hash = get_urlenc_info_hash(&md).unwrap();
     let peer_id = encode_binary(b"-TO0000-0123456789AB");
     let port = String::from("3000");
@@ -37,77 +59,81 @@ pub(crate) async fn req_http_tracker_info(
     Ok(tracker_info)
 }
 
-pub(crate) async fn req_udp_tracker_info(
+async fn req_udp_tracker_info(
+    tracker_url: &String,
     md: &Metadata,
 ) -> Result<TrackerInfo, Box<dyn std::error::Error>> {
+    let url = url::Url::parse(tracker_url).unwrap();
+    let addr = match url.socket_addrs(|| None) {
+        Ok(v) => v[0],
+        Err(_) => {
+            return Err(Box::new(IOError::new(
+                ErrorKind::InvalidInput,
+                "Invalid tracker url: {tracker_url}",
+            )));
+        }
+    };
+
+    let mut timeout_duration = 1000;
+
+    let socket = UdpSocket::bind("0.0.0.0:3000").await?;
+    socket.connect(addr).await?;
+
     let mut rng = rand::thread_rng();
     let trans_id: u32 = rng.gen();
     let connect_msg = connect_msg(trans_id);
+    let _ = socket.send(&connect_msg).await?;
 
-    let socket = UdpSocket::bind("0.0.0.0:3000").await?;
+    let mut buf = [0; 16];
+    let resp = socket.recv(&mut buf);
 
-    for tracker in &md.announce_list {
-        let mut duration = 1000;
-        let tracker = &tracker[0];
-        let url = url::Url::parse(tracker).unwrap();
-        let addr = match url.socket_addrs(|| None) {
-            Ok(v) => v[0],
-            Err(_) => {
-                println!("Invalid tracker url: {tracker}.");
-                continue;
-            }
-        };
-        socket.connect(addr).await?;
+    match timeout(Duration::from_millis(timeout_duration), resp).await {
+        Err(_) => {
+            return Err(Box::new(IOError::new(
+                ErrorKind::TimedOut,
+                "Timeout when attempting to perform UDP tracker handshake with {tracker_url} after {duration}ms",
+            )));
+        }
+        Ok(fut) => fut?,
+    };
 
-        let mut buf = [0; 16];
-        let _ = socket.send(&connect_msg).await?;
+    let mut action_recv = &buf[..4];
+    let mut trans_id_recv = &buf[4..8];
+    let mut conn_id_recv = &buf[8..];
+
+    let action_recv = action_recv.read_u32::<BigEndian>()?;
+    let trans_id_recv = trans_id_recv.read_u32::<BigEndian>()?;
+    let conn_id_recv = conn_id_recv.read_u64::<BigEndian>()?;
+
+    if action_recv != 0 || trans_id_recv != trans_id {
+        return Err(Box::new(IOError::new(
+            ErrorKind::InvalidData,
+            "Invalid response from server",
+        )));
+    }
+
+    let announce_msg = announce_msg(md, conn_id_recv, trans_id, None);
+
+    loop {
+        let _ = socket.send(&announce_msg).await?;
+
+        let mut buf = [0; 1024];
         let resp = socket.recv(&mut buf);
-        match timeout(Duration::from_millis(duration), resp).await {
+        match timeout(Duration::from_millis(timeout_duration), resp).await {
             Err(_) => {
-                println!(
-                    "Failed to receive response from {tracker} after {duration}ms, connecting to next..."
-                );
+                if timeout_duration >= 20000 {
+                    break;
+                }
+
+                println!("Failed to receive announce response from tracker after {timeout_duration}ms, retrying...");
+                timeout_duration *= 2;
                 continue;
             }
             Ok(fut) => fut?,
         };
 
-        let mut action_recv = &buf[..4];
-        let mut trans_id_recv = &buf[4..8];
-        let mut conn_id_recv = &buf[8..];
-
-        let action_recv = action_recv.read_u32::<BigEndian>()?;
-        let trans_id_recv = trans_id_recv.read_u32::<BigEndian>()?;
-        let conn_id_recv = conn_id_recv.read_u64::<BigEndian>()?;
-
-        if action_recv != 0 || trans_id_recv != trans_id {
-            println!("Invalid response from server");
-            continue;
-        }
-
-        let announce_msg = announce_msg(md, conn_id_recv, trans_id, None);
-
-        loop {
-            let mut buf = [0; 1024];
-            let _ = socket.send(&announce_msg).await?;
-            let resp = socket.recv(&mut buf);
-            match timeout(Duration::from_millis(duration), resp).await {
-                Err(_) => {
-                    if duration >= 20000 {
-                        break;
-                    }
-
-                    println!("Failed to receive announce response from tracker after {duration}ms, retrying...");
-                    duration *= 2;
-                    continue;
-                }
-                Ok(fut) => fut?,
-            };
-
-            let res = TrackerInfo::from_raw(buf.to_vec()).unwrap();
-
-            return Ok(res);
-        }
+        let res = TrackerInfo::from_raw(buf.to_vec()).unwrap();
+        return Ok(res);
     }
 
     return Err(Box::new(IOError::new(

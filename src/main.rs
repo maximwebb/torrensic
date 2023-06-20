@@ -14,14 +14,10 @@ use crate::client::message::{bitfield::Bitfield, cancel::Cancel, piece::Piece, u
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let torrent_file: String = String::from("torrents/test.torrent");
+    let torrent_file: String = String::from("torrents/airfryer.torrent");
     let md = &read_metadata(&torrent_file).unwrap();
 
-    let tracker_info = if md.announce.starts_with("http") {
-        client::tracker::req_http_tracker_info(md).await?
-    } else {
-        client::tracker::req_udp_tracker_info(md).await?
-    };
+    let tracker_info = client::tracker::req_tracker_info(md).await?;
 
     println!("Found {} peers.", { tracker_info.peers.len() });
 
