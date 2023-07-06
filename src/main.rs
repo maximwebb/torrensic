@@ -1,5 +1,6 @@
 mod client;
 mod parser;
+mod utils;
 
 use tokio;
 
