@@ -6,17 +6,14 @@ use tokio::{
     net::TcpStream,
 };
 
-use crate::parser::{
-    metadata::{Metadata},
-    trackerinfo::PeerInfo,
-};
+use crate::parser::{metadata::Metadata, trackerinfo::PeerInfo};
 
 pub(crate) async fn handshake(
     peer: &PeerInfo,
     md: &Metadata,
     rd: &mut ReadHalf<TcpStream>,
     wr: &mut WriteHalf<TcpStream>,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<Vec<u8>, Box<dyn Error>> {
     let pstr: Vec<u8> = b"BitTorrent protocol".to_vec();
     let pstrlen: Vec<u8> = vec![pstr.len().try_into().unwrap()];
     let reserved: Vec<u8> = vec![0; 8];
@@ -43,11 +40,7 @@ pub(crate) async fn handshake(
         )));
     }
 
-    let msg = String::from_utf8_lossy(&buf.to_vec())
-        .trim_matches(char::from(0))
-        .to_string();
+    let remaining: Vec<u8> = buf[68..n].to_vec();
 
-    println!("Received: {msg}");
-
-    Ok(())
+    Ok(remaining)
 }

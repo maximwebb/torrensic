@@ -1,3 +1,5 @@
+use std::cmp::min;
+
 use byteorder::{BigEndian, ReadBytesExt};
 use enum_dispatch::enum_dispatch;
 
@@ -48,13 +50,14 @@ pub trait PeerWireMessage {
     fn name(&self) -> String;
 
     fn print(&self) -> String {
+        let payload_len = min(self.payload().len(), 60);
         match self.id() {
             Some(id) => format!(
                 "{}: <{:0>4}><{}><{:?}>",
                 self.name(),
                 self.len().to_string(),
                 id,
-                &self.payload()
+                &self.payload()[..payload_len]
             ),
             None => format!("{}: <{:0>4}><><>", self.name(), self.len().to_string()),
         }
@@ -127,7 +130,9 @@ pub fn parse(raw: Vec<u8>) -> Result<Message, ()> {
             }
             let mut piece_index = &raw[5..9];
             let piece_index = piece_index.read_u32::<BigEndian>().unwrap();
-            return Ok(Message::from(Have { piece_index }));
+            return Ok(Message::from(Have {
+                piece_index: piece_index.try_into().unwrap(),
+            }));
         }
         5 => {
             let bitfield = raw[5..].to_vec();

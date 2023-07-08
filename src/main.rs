@@ -1,6 +1,5 @@
 mod client;
 mod parser;
-mod utils;
 
 use tokio;
 
@@ -15,7 +14,7 @@ use crate::client::message::{bitfield::Bitfield, cancel::Cancel, piece::Piece, u
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let torrent_file: String = String::from("torrents/airfryer.torrent");
+    let torrent_file: String = String::from("torrents/test_folder.torrent");
     let md = &read_metadata(&torrent_file).unwrap();
 
     let tracker_info = client::tracker::req_tracker_info(md).await?;
@@ -28,6 +27,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+// 213.243
+// 143.244
 
 fn test_messages() {
     let keep_alive = Message::from(KeepAlive {});

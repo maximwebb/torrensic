@@ -9,7 +9,7 @@ use urlencoding::encode_binary;
 use super::info::Info;
 
 pub(crate) struct Metadata {
-    pub announce: String,
+    pub announce: Option<String>,
     pub announce_list: Vec<Vec<String>>,
     pub info: Info,
     pub info_hash: Vec<u8>,
@@ -55,7 +55,6 @@ impl FromBencode for Metadata {
             }
         }
 
-        let announce = announce.ok_or_else(|| DecError::missing_field("announce"))?;
         let announce_list =
             announce_list.ok_or_else(|| DecError::missing_field("announce-list"))?;
         let info = info.ok_or_else(|| DecError::missing_field("info"))?;
@@ -75,12 +74,25 @@ impl ToBencode for Metadata {
 
     fn encode(&self, encoder: bendy::encoding::SingleItemEncoder) -> Result<(), EncError> {
         encoder.emit_dict(|mut e| {
-            e.emit_pair(b"announce", &self.announce)?;
+            match &self.announce {
+                Some(announce) => e.emit_pair(b"announce", announce)?,
+                None => {},
+            };
             e.emit_pair(b"announce-list", &self.announce_list)?;
             e.emit_pair(b"info", &self.info)
         })?;
 
         Ok(())
+    }
+}
+
+impl Metadata {
+    pub fn pieces_len(&self) -> usize {
+        return self.info.pieces.len() / 20;
+    }
+
+    pub fn block_num(&self) -> usize {
+        return (self.info.piece_length / (2<<14)).try_into().unwrap();
     }
 }
 
@@ -91,7 +103,7 @@ pub(crate) fn read_metadata(path: &String) -> Result<Metadata, DecError> {
     Ok(metadata)
 }
 
-//TODO: Directly compute info hash when computing metadata.
+
 pub(crate) fn get_urlenc_info_hash(metadata: &Metadata) -> Result<String, EncError> {
     let bytes = metadata.info.to_bencode()?;
 
