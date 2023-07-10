@@ -17,9 +17,6 @@ use crate::{
 };
 
 pub(crate) async fn run(peer: &PeerInfo, md: &Metadata) -> Result<(), Box<dyn std::error::Error>> {
-    // let ip = "79.100.5.104";
-    // let port = 36367;
-    // let addr = format!("{}:{}", ip, port);
     let addr = format!("{}:{}", peer.ip, peer.port);
     let addr_str = addr.clone();
     println!("Connecting to {addr_str}");
@@ -88,8 +85,8 @@ pub(crate) async fn run(peer: &PeerInfo, md: &Metadata) -> Result<(), Box<dyn st
                     if !peer_state.client_choked {
                         let request_msg = Message::from(Request {
                             index: piece_index,
-                            begin: block_index * (2 << 14),
-                            length: 2 << 14,
+                            begin: block_index * (2 << 13),
+                            length: 2 << 13,
                         });
                         wr.write_all(&request_msg.serialise()).await?;
                     } else {
@@ -106,7 +103,7 @@ pub(crate) async fn run(peer: &PeerInfo, md: &Metadata) -> Result<(), Box<dyn st
                 begin,
                 block,
             }) => {
-                if index == piece_index && begin == (block_index * (2 << 14)) {
+                if index == piece_index && begin == (block_index * (2 << 13)) {
                     println!("Received block {block_index} from piece {piece_index}!");
                     if block_index + 1 == md.block_num().try_into().unwrap() {
                         block_index = 0;
@@ -117,8 +114,8 @@ pub(crate) async fn run(peer: &PeerInfo, md: &Metadata) -> Result<(), Box<dyn st
                     if !peer_state.client_choked {
                         let request_msg = Message::from(Request {
                             index: piece_index,
-                            begin: block_index * (2 << 14),
-                            length: 2 << 14,
+                            begin: block_index * (2 << 13),
+                            length: 2 << 13,
                         });
                         wr.write_all(&request_msg.serialise()).await?;
                     } else {
@@ -137,7 +134,7 @@ pub(crate) async fn run(peer: &PeerInfo, md: &Metadata) -> Result<(), Box<dyn st
                 let request_msg = Message::from(Request {
                     index: piece_index,
                     begin: 0,
-                    length: 2 << 14,
+                    length: 2 << 13,
                 });
                 wr.write_all(&request_msg.serialise()).await?;
             }
@@ -166,3 +163,10 @@ fn bitvec_to_bytes(bits: &BitVec<u8, Msb0>) -> Vec<u8> {
     let res: Vec<u8> = bv.into_vec();
     res
 }
+
+// How do we structure file creation/writing?
+// should it be part of the peer_wire?
+// maybe a sort of builder module?
+
+// fn create(md: &Metadata)
+// fn write(md: &Metadata, piece, block, data)

@@ -1,6 +1,8 @@
+mod builder;
 mod client;
 mod parser;
 
+use builder::file_builder;
 use tokio;
 
 use parser::metadata::read_metadata;
@@ -14,16 +16,33 @@ use crate::client::message::{bitfield::Bitfield, cancel::Cancel, piece::Piece, u
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let torrent_file: String = String::from("torrents/test_folder.torrent");
+    let torrent_file = String::from("torrents/test_folder.torrent");
+    let output_dir = String::from("downloads");
     let md = &read_metadata(&torrent_file).unwrap();
 
-    let tracker_info = client::tracker::req_tracker_info(md).await?;
-
-    println!("Found {} peers.", { tracker_info.peers.len() });
-
-    for peer in tracker_info.peers {
-        let _ = client::peer_wire::run(&peer, md).await;
+    match file_builder::create(md, &output_dir) {
+        Ok(_) => {}
+        Err(e) => {
+            println!("{:?}", e)
+        }
     }
+
+    let data = vec![4; 30000];
+
+    match file_builder::write(md, &output_dir, 537, 1, data) {
+        Ok(_) => {}
+        Err(e) => {
+            println!("{:?}", e)
+        }
+    }
+
+    // let tracker_info = client::tracker::req_tracker_info(md).await?;
+
+    // println!("Found {} peers.", { tracker_info.peers.len() });
+
+    // for peer in tracker_info.peers {
+    //     let _ = client::peer_wire::run(&peer, md).await;
+    // }
 
     Ok(())
 }
