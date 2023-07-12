@@ -1,22 +1,29 @@
+use std::error::Error;
 use std::time::Duration;
 
 use bitvec::prelude::*;
-use tokio::io::{AsyncWriteExt, ReadBuf};
+use tokio::io::{AsyncWriteExt, ReadBuf, WriteHalf};
 use tokio::time::timeout;
 use tokio::{io::AsyncReadExt, net::TcpStream};
 
+use crate::builder::file_builder;
 use crate::client::message::bitfield::Bitfield;
 use crate::client::message::have::Have;
 use crate::client::message::interested::Interested;
 use crate::client::message::piece::Piece;
-use crate::client::message::request::Request;
+use crate::client::message::request::{self, Request};
 use crate::client::message::{Message, PeerWireMessage};
 use crate::{
     client::{handshake::handshake, message::parse},
     parser::{metadata::Metadata, trackerinfo::PeerInfo},
 };
 
-pub(crate) async fn run(peer: &PeerInfo, md: &Metadata) -> Result<(), Box<dyn std::error::Error>> {
+
+pub(crate) async fn run(
+    peer: &PeerInfo,
+    md: &Metadata,
+    output_dir: &String,
+) -> Result<(), Box<dyn std::error::Error>> {
     let addr = format!("{}:{}", peer.ip, peer.port);
     let addr_str = addr.clone();
     println!("Connecting to {addr_str}");
@@ -40,8 +47,8 @@ pub(crate) async fn run(peer: &PeerInfo, md: &Metadata) -> Result<(), Box<dyn st
         peer_interested: false,
     };
 
-    let mut client_pieces: BitVec<u8, Msb0> = BitVec::<u8, Msb0>::repeat(false, md.pieces_len());
-    let mut peer_pieces: BitVec<u8, Msb0> = BitVec::<u8, Msb0>::repeat(false, md.pieces_len());
+    let mut client_pieces: BitVec<u8, Msb0> = BitVec::<u8, Msb0>::repeat(false, md.num_pieces());
+    let mut peer_pieces: BitVec<u8, Msb0> = BitVec::<u8, Msb0>::repeat(false, md.num_pieces());
 
     let bitfield_msg = Bitfield {
         bitfield: bitvec_to_bytes(&client_pieces),
@@ -52,8 +59,13 @@ pub(crate) async fn run(peer: &PeerInfo, md: &Metadata) -> Result<(), Box<dyn st
     let mut block_index: u32 = 0;
 
     loop {
+        if piece_index == md.num_pieces().try_into().unwrap() {
+            println!("Torrent download complete!");
+            return Ok(());
+        }
+
         let rem = &remaining;
-        let mut buf = [0; 33000];
+        let mut buf = [0; 17000];
         let n = rd.read(&mut buf[..]).await?;
         let buf = [rem.to_vec(), buf[0..n].to_vec()].concat();
 
@@ -69,7 +81,6 @@ pub(crate) async fn run(peer: &PeerInfo, md: &Metadata) -> Result<(), Box<dyn st
                 v
             }
             Err(_) => {
-                println!("Partial message");
                 remaining = buf_;
                 continue;
             }
@@ -78,17 +89,12 @@ pub(crate) async fn run(peer: &PeerInfo, md: &Metadata) -> Result<(), Box<dyn st
         match msg {
             Message::Cancel(_) => return Ok(()),
             Message::Bitfield(Bitfield { bitfield: raw }) => {
-                peer_pieces = BitVec::<_, Msb0>::from_vec(raw[0..md.pieces_len() / 8].to_vec());
+                peer_pieces = BitVec::<_, Msb0>::from_vec(raw[0..md.num_pieces() / 8].to_vec());
                 let matched_pieces = peer_pieces.clone() & !client_pieces.clone();
                 if matched_pieces.any() {
                     peer_state.client_interested = true;
                     if !peer_state.client_choked {
-                        let request_msg = Message::from(Request {
-                            index: piece_index,
-                            begin: block_index * (2 << 13),
-                            length: 2 << 13,
-                        });
-                        wr.write_all(&request_msg.serialise()).await?;
+                        request_block(md, piece_index, block_index, &mut wr).await?;
                     } else {
                         let interest_msg = Message::from(Interested {});
                         wr.write_all(&interest_msg.serialise()).await?;
@@ -104,20 +110,17 @@ pub(crate) async fn run(peer: &PeerInfo, md: &Metadata) -> Result<(), Box<dyn st
                 block,
             }) => {
                 if index == piece_index && begin == (block_index * (2 << 13)) {
-                    println!("Received block {block_index} from piece {piece_index}!");
-                    if block_index + 1 == md.block_num().try_into().unwrap() {
+                    println!("Received block {block_index} from piece {piece_index}");
+                    file_builder::write(md, output_dir, piece_index, begin, block)?;
+                    if block_index + 1 == md.num_blocks() {
                         block_index = 0;
                         piece_index += 1;
+                        client_pieces.set(piece_index.try_into().unwrap(), true);
                     } else {
                         block_index += 1;
                     }
                     if !peer_state.client_choked {
-                        let request_msg = Message::from(Request {
-                            index: piece_index,
-                            begin: block_index * (2 << 13),
-                            length: 2 << 13,
-                        });
-                        wr.write_all(&request_msg.serialise()).await?;
+                        request_block(md, piece_index, block_index, &mut wr).await?;
                     } else {
                         let interest_msg = Message::from(Interested {});
                         wr.write_all(&interest_msg.serialise()).await?;
@@ -131,12 +134,8 @@ pub(crate) async fn run(peer: &PeerInfo, md: &Metadata) -> Result<(), Box<dyn st
                 peer_state.client_choked = false;
                 let interest_msg = Message::from(Interested {});
                 wr.write_all(&interest_msg.serialise()).await?;
-                let request_msg = Message::from(Request {
-                    index: piece_index,
-                    begin: 0,
-                    length: 2 << 13,
-                });
-                wr.write_all(&request_msg.serialise()).await?;
+
+                request_block(md, piece_index, block_index, &mut wr).await?;
             }
             Message::Interested(_) => peer_state.peer_interested = true,
             Message::NotInterested(_) => peer_state.peer_interested = false,
@@ -152,6 +151,21 @@ struct PeerState {
     peer_interested: bool,
 }
 
+async fn request_block(
+    md: &Metadata,
+    piece_index: u32,
+    block_index: u32,
+    wr: &mut WriteHalf<TcpStream>,
+) -> Result<(), Box<dyn Error>> {
+    let request_msg = Message::from(Request {
+        index: piece_index,
+        begin: block_index * (2 << 13),
+        length: md.block_len(piece_index, block_index),
+    });
+    wr.write_all(&request_msg.serialise()).await?;
+    Ok(())
+}
+
 fn bitvec_to_bytes(bits: &BitVec<u8, Msb0>) -> Vec<u8> {
     let mut bv = bits.to_owned();
     let pad_amt = (8 - (bv.len() % 8)) % 8;
@@ -163,10 +177,3 @@ fn bitvec_to_bytes(bits: &BitVec<u8, Msb0>) -> Vec<u8> {
     let res: Vec<u8> = bv.into_vec();
     res
 }
-
-// How do we structure file creation/writing?
-// should it be part of the peer_wire?
-// maybe a sort of builder module?
-
-// fn create(md: &Metadata)
-// fn write(md: &Metadata, piece, block, data)

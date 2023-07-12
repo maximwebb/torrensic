@@ -22,7 +22,7 @@ pub(crate) fn create(md: &Metadata, dir: &String) -> io::Result<()> {
 
         fs::create_dir_all(prefix)?;
         let mut f = fs::File::create(path)?;
-        f.seek(SeekFrom::Start(file.length.into())).unwrap();
+        f.seek(SeekFrom::Start((file.length - 1).into())).unwrap();
         f.write_all(&[0]).unwrap();
     }
 
@@ -32,12 +32,12 @@ pub(crate) fn create(md: &Metadata, dir: &String) -> io::Result<()> {
 pub(crate) fn write(
     md: &Metadata,
     dir: &String,
-    piece: u32,
-    block: u32,
+    index: u32,
+    begin: u32,
     data: Vec<u8>,
 ) -> io::Result<()> {
     // Should this be usize?
-    let start_pos: u32 = md.info.piece_length * piece + (2 << 13) * block;
+    let start_pos: u32 = md.info.piece_length * index + begin;
     let end_pos: u32 = start_pos + u32::try_from(data.len()).unwrap();
     let mut cur_pos: u32 = 0;
 
@@ -52,15 +52,10 @@ pub(crate) fn write(
             // Determines slice of data being written to file
             let start = max(start_pos, cur_pos) - start_pos;
             let end = min(end_pos, cur_pos + file.length) - start_pos;
-            println!(
-                "Writing {} bytes to {}",
-                end - start,
-                file.path.last().unwrap()
-            );
 
-            // If start index is mid-file, move write head accordingly
+            // If performing the first write, move cursor to required position
             if cur_pos < start_pos {
-                f.seek(SeekFrom::Start(start_pos.into()))?;
+                f.seek(SeekFrom::Start((start_pos - cur_pos).into()))?;
             }
             f.write_all(&data[start as usize..end as usize])?;
         }

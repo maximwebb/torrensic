@@ -17,38 +17,25 @@ use crate::client::message::{bitfield::Bitfield, cancel::Cancel, piece::Piece, u
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let torrent_file = String::from("torrents/test_folder.torrent");
-    let output_dir = String::from("downloads");
+    let output_dir = &String::from("downloads");
     let md = &read_metadata(&torrent_file).unwrap();
 
-    match file_builder::create(md, &output_dir) {
+    match file_builder::create(md, output_dir) {
         Ok(_) => {}
         Err(e) => {
             println!("{:?}", e)
         }
     }
 
-    let data = vec![4; 30000];
+    let tracker_info = client::tracker::req_tracker_info(md).await?;
+    println!("Found {} peers.", { tracker_info.peers.len() });
 
-    match file_builder::write(md, &output_dir, 537, 1, data) {
-        Ok(_) => {}
-        Err(e) => {
-            println!("{:?}", e)
-        }
+    for peer in &tracker_info.peers[..1] {
+        let _ = client::peer_wire::run(&peer, md, output_dir).await;
     }
-
-    // let tracker_info = client::tracker::req_tracker_info(md).await?;
-
-    // println!("Found {} peers.", { tracker_info.peers.len() });
-
-    // for peer in tracker_info.peers {
-    //     let _ = client::peer_wire::run(&peer, md).await;
-    // }
 
     Ok(())
 }
-
-// 213.243
-// 143.244
 
 fn test_messages() {
     let keep_alive = Message::from(KeepAlive {});
