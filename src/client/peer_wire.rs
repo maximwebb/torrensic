@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::io::ErrorKind;
 use std::time::Duration;
 
 use bitvec::prelude::*;
@@ -18,17 +19,17 @@ use crate::{
     parser::{metadata::Metadata, trackerinfo::PeerInfo},
 };
 
-
 pub(crate) async fn run(
     peer: &PeerInfo,
     md: &Metadata,
     output_dir: &String,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let addr = format!("{}:{}", peer.ip, peer.port);
+    let addr = "212.21.12.9:41891";
+    // let addr = format!("{}:{}", peer.ip, peer.port);
     let addr_str = addr.clone();
     println!("Connecting to {addr_str}");
     let socket = TcpStream::connect(addr);
-    let socket = match timeout(Duration::from_millis(10000), socket).await {
+    let socket = match timeout(Duration::from_millis(5000), socket).await {
         Ok(v) => match v {
             Ok(v) => v,
             Err(e) => return Err(Box::new(e)),
@@ -57,28 +58,31 @@ pub(crate) async fn run(
 
     let mut piece_index: u32 = 0;
     let mut block_index: u32 = 0;
-
     loop {
         if piece_index == md.num_pieces().try_into().unwrap() {
-            println!("Torrent download complete!");
             return Ok(());
         }
 
         let rem = &remaining;
         let mut buf = [0; 17000];
-        let n = rd.read(&mut buf[..]).await?;
+        let read_fut = rd.read(&mut buf[..]);
+        let n = match timeout(Duration::from_millis(500), read_fut).await {
+            Ok(v) => v.unwrap(),
+            Err(_) => 0,
+        };
+
         let buf = [rem.to_vec(), buf[0..n].to_vec()].concat();
 
         if buf.len() == 0 {
-            println!("Empty message");
-            return Ok(());
+            println!("Received empty message");
+            continue;
         }
 
         let buf_ = buf.clone();
         let msg = match parse(buf) {
-            Ok(v) => {
-                remaining = Vec::new();
-                v
+            Ok((msg, rem)) => {
+                remaining = rem;
+                msg
             }
             Err(_) => {
                 remaining = buf_;
@@ -96,8 +100,7 @@ pub(crate) async fn run(
                     if !peer_state.client_choked {
                         request_block(md, piece_index, block_index, &mut wr).await?;
                     } else {
-                        let interest_msg = Message::from(Interested {});
-                        wr.write_all(&interest_msg.serialise()).await?;
+                        send_interested(&mut wr).await?;
                     }
                 }
             }
@@ -113,32 +116,44 @@ pub(crate) async fn run(
                     println!("Received block {block_index} from piece {piece_index}");
                     file_builder::write(md, output_dir, piece_index, begin, block)?;
                     if block_index + 1 == md.num_blocks() {
+                        client_pieces.set(piece_index.try_into().unwrap(), true);
                         block_index = 0;
                         piece_index += 1;
-                        client_pieces.set(piece_index.try_into().unwrap(), true);
                     } else {
                         block_index += 1;
                     }
                     if !peer_state.client_choked {
                         request_block(md, piece_index, block_index, &mut wr).await?;
                     } else {
-                        let interest_msg = Message::from(Interested {});
-                        wr.write_all(&interest_msg.serialise()).await?;
+                        send_interested(&mut wr).await?;
                     }
                 } else {
                     println!("Received wrong block");
                 }
             }
-            Message::Choke(_) => peer_state.client_choked = true,
+            Message::Choke(_) => {
+                peer_state.client_choked = true;
+                if !peer_state.client_interested {
+                    send_interested(&mut wr).await?;
+                    peer_state.client_interested = true;
+                }
+            }
             Message::Unchoke(_) => {
                 peer_state.client_choked = false;
-                let interest_msg = Message::from(Interested {});
-                wr.write_all(&interest_msg.serialise()).await?;
-
+                if !peer_state.client_interested {
+                    send_interested(&mut wr).await?;
+                    peer_state.client_interested = true;
+                }
                 request_block(md, piece_index, block_index, &mut wr).await?;
             }
-            Message::Interested(_) => peer_state.peer_interested = true,
+            Message::Interested(_) => {
+                peer_state.peer_interested = true;
+                peer_state.peer_choked = false;
+            }
             Message::NotInterested(_) => peer_state.peer_interested = false,
+            Message::KeepAlive(_) => {
+                request_block(md, piece_index, block_index, &mut wr).await?;
+            }
             _ => continue,
         }
     }
@@ -163,6 +178,12 @@ async fn request_block(
         length: md.block_len(piece_index, block_index),
     });
     wr.write_all(&request_msg.serialise()).await?;
+    Ok(())
+}
+
+async fn send_interested(wr: &mut WriteHalf<TcpStream>) -> Result<(), Box<dyn Error>> {
+    let interest_msg = Message::from(Interested {});
+    wr.write_all(&interest_msg.serialise()).await?;
     Ok(())
 }
 

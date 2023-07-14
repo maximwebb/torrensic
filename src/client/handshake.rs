@@ -31,7 +31,7 @@ pub(crate) async fn handshake(
 
     let _ = wr.write_all(&msg).await?;
 
-    let mut buf = vec![0; 256];
+    let mut buf = vec![0; 1024];
     let n = rd.read(&mut buf).await?;
     if n == 0 {
         return Err(Box::new(IOError::new(

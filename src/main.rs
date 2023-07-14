@@ -16,7 +16,7 @@ use crate::client::message::{bitfield::Bitfield, cancel::Cancel, piece::Piece, u
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let torrent_file = String::from("torrents/test_folder.torrent");
+    let torrent_file = String::from("torrents/homeowners.torrent");
     let output_dir = &String::from("downloads");
     let md = &read_metadata(&torrent_file).unwrap();
 
@@ -30,8 +30,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tracker_info = client::tracker::req_tracker_info(md).await?;
     println!("Found {} peers.", { tracker_info.peers.len() });
 
-    for peer in &tracker_info.peers[..1] {
-        let _ = client::peer_wire::run(&peer, md, output_dir).await;
+    for peer in &tracker_info.peers {
+        match client::peer_wire::run(&peer, md, output_dir).await {
+            Ok(_) => {
+                println!("Torrent download complete!");
+                return Ok(())
+            },
+            Err(e) => println!("{:?}", e),
+        }
     }
 
     Ok(())
@@ -75,7 +81,7 @@ fn test_messages() {
         piece,
         cancel,
     ]
-    .map(|msg| parse(msg.serialise()).unwrap());
+    .map(|msg| parse(msg.serialise()).unwrap().0);
     for msg in res {
         println!("{}", msg.print())
     }
