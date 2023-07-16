@@ -78,9 +78,9 @@ pub enum Message {
     Cancel(Cancel),
 }
 
-pub fn parse(raw: Vec<u8>) -> Result<(Message, Vec<u8>), ()> {
+pub fn parse(raw: &Vec<u8>) -> Result<(Option<Message>, Vec<u8>), ()> {
     if raw.len() < 4 {
-        return Err(());
+        return Ok((None, raw.to_vec()));
     }
 
     let mut len_prefix: &[u8] = &raw[0..4];
@@ -91,7 +91,7 @@ pub fn parse(raw: Vec<u8>) -> Result<(Message, Vec<u8>), ()> {
     }
 
     if len_prefix + 4 > raw.len().try_into().unwrap() {
-        return Err(());
+        return Ok((None, raw.to_vec()));
     }
 
     // Capture remaining bytes
@@ -99,7 +99,7 @@ pub fn parse(raw: Vec<u8>) -> Result<(Message, Vec<u8>), ()> {
     let rem = raw[msg_len..].to_vec();
 
     let id: u8 = match len_prefix {
-        0 => return Ok((Message::from(KeepAlive {}), rem)),
+        0 => return Ok((Some(Message::from(KeepAlive {})), rem)),
         _ => raw[4],
     };
 
@@ -108,25 +108,25 @@ pub fn parse(raw: Vec<u8>) -> Result<(Message, Vec<u8>), ()> {
             if len_prefix != 1 {
                 return Err(());
             }
-            return Ok((Message::from(Choke {}), rem));
+            return Ok((Some(Message::from(Choke {})), rem));
         }
         1 => {
             if len_prefix != 1 {
                 return Err(());
             }
-            return Ok((Message::from(Unchoke {}), rem));
+            return Ok((Some(Message::from(Unchoke {})), rem));
         }
         2 => {
             if len_prefix != 1 {
                 return Err(());
             }
-            return Ok((Message::from(Interested {}), rem));
+            return Ok((Some(Message::from(Interested {})), rem));
         }
         3 => {
             if len_prefix != 1 {
                 return Err(());
             }
-            return Ok((Message::from(NotInterested {}), rem));
+            return Ok((Some(Message::from(NotInterested {})), rem));
         }
         4 => {
             if len_prefix != 5 {
@@ -135,15 +135,15 @@ pub fn parse(raw: Vec<u8>) -> Result<(Message, Vec<u8>), ()> {
             let mut piece_index = &raw[5..9];
             let piece_index = piece_index.read_u32::<BigEndian>().unwrap();
             return Ok((
-                Message::from(Have {
+                Some(Message::from(Have {
                     piece_index: piece_index.try_into().unwrap(),
-                }),
+                })),
                 rem,
             ));
         }
         5 => {
             let bitfield = raw[5..].to_vec();
-            return Ok((Message::from(Bitfield { bitfield }), rem));
+            return Ok((Some(Message::from(Bitfield { bitfield })), rem));
         }
         6 => {
             if len_prefix != 13 {
@@ -158,11 +158,11 @@ pub fn parse(raw: Vec<u8>) -> Result<(Message, Vec<u8>), ()> {
             let length = length.read_u32::<BigEndian>().unwrap();
 
             return Ok((
-                Message::from(Request {
+                Some(Message::from(Request {
                     index,
                     begin,
                     length,
-                }),
+                })),
                 rem,
             ));
         }
@@ -179,11 +179,11 @@ pub fn parse(raw: Vec<u8>) -> Result<(Message, Vec<u8>), ()> {
             let begin = begin.read_u32::<BigEndian>().unwrap();
 
             return Ok((
-                Message::from(Piece {
+                Some(Message::from(Piece {
                     index,
                     begin,
                     block,
-                }),
+                })),
                 rem,
             ));
         }
@@ -200,11 +200,11 @@ pub fn parse(raw: Vec<u8>) -> Result<(Message, Vec<u8>), ()> {
             let length = length.read_u32::<BigEndian>().unwrap();
 
             return Ok((
-                Message::from(Cancel {
+                Some(Message::from(Cancel {
                     index,
                     begin,
                     length,
-                }),
+                })),
                 rem,
             ));
         }

@@ -44,45 +44,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn test_messages() {
-    let keep_alive = Message::from(KeepAlive {});
-    let choke = Message::from(Choke {});
-    let unchoke = Message::from(Unchoke {});
-    let interested = Message::from(Interested {});
-    let not_interested = Message::from(NotInterested {});
-    let have = Message::from(Have { piece_index: 420 });
-    let bitfield = Message::from(Bitfield {
-        bitfield: vec![1, 2, 3, 4, 5, 6],
-    });
-    let request = Message::from(Request {
-        index: 42,
-        begin: 33,
-        length: 99,
-    });
-    let piece = Message::from(Piece {
-        index: 69,
-        begin: 420,
-        block: vec![3, 1, 4, 1, 5, 9],
-    });
-    let cancel = Message::from(Cancel {
-        index: 43,
-        begin: 34,
-        length: 100,
-    });
+    // let keep_alive = Message::from(KeepAlive {});
+    // let choke = Message::from(Choke {});
+    // let unchoke = Message::from(Unchoke {});
+    // let interested = Message::from(Interested {});
+    // let not_interested = Message::from(NotInterested {});
+    // let have = Message::from(Have { piece_index: 420 });
+    // let bitfield = Message::from(Bitfield {
+    //     bitfield: vec![1, 2, 3, 4, 5, 6],
+    // });
+    // let request = Message::from(Request {
+    //     index: 42,
+    //     begin: 33,
+    //     length: 99,
+    // });
+    // let piece = Message::from(Piece {
+    //     index: 69,
+    //     begin: 420,
+    //     block: vec![3, 1, 4, 1, 5, 9],
+    // });
+    // let cancel = Message::from(Cancel {
+    //     index: 43,
+    //     begin: 34,
+    //     length: 100,
+    // });
 
-    let res = [
-        keep_alive,
-        choke,
-        unchoke,
-        interested,
-        not_interested,
-        have,
-        bitfield,
-        request,
-        piece,
-        cancel,
-    ]
-    .map(|msg| parse(msg.serialise()).unwrap().0);
-    for msg in res {
-        println!("{}", msg.print())
-    }
+    // let res = [
+    //     keep_alive,
+    //     choke,
+    //     unchoke,
+    //     interested,
+    //     not_interested,
+    //     have,
+    //     bitfield,
+    //     request,
+    //     piece,
+    //     cancel,
+    // ]
+    // .map(|msg| parse(msg.serialise()).unwrap().0);
+    // for msg in res {
+    //     println!("{}", msg.print())
+    // }
 }
