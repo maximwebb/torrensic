@@ -1,7 +1,7 @@
 use super::PeerWireMessage;
 
 pub struct Have {
-    pub piece_index: usize
+    pub piece_index: u32
 }
 
 impl PeerWireMessage for Have {

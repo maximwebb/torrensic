@@ -39,7 +39,6 @@ pub trait PeerWireMessage {
             Some(_) => 1,
             None => 0,
         };
-
         return (id_len + self.payload().len()).try_into().unwrap();
     }
 
@@ -209,5 +208,95 @@ pub fn parse(raw: &Vec<u8>) -> Result<(Option<Message>, Vec<u8>), ()> {
             ));
         }
         _ => Err(()),
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    fn parse_then_serialise(raw: &Vec<u8>) -> Vec<u8> {
+        let parsed = parse(&raw).unwrap().0;
+        let parsed = parsed.expect("Error parsing message");
+        parsed.serialise()
+    }
+
+    #[test]
+    fn parse_serialise_preserves_keep_alive() {
+        let raw = vec![0, 0, 0, 0];
+        let serialised = parse_then_serialise(&raw);
+        assert_eq!(raw, serialised);
+    }
+
+    #[test]
+    fn parse_serialise_preserves_choke() {
+        let raw = vec![0, 0, 0, 1, 0];
+        let serialised = parse_then_serialise(&raw);
+
+        assert_eq!(raw, serialised);
+    }
+
+    #[test]
+    fn parse_serialise_preserves_unchoke() {
+        let raw = vec![0, 0, 0, 1, 1];
+        let serialised = parse_then_serialise(&raw);
+
+        assert_eq!(raw, serialised);
+    }
+
+    #[test]
+    fn parse_serialise_preserves_interested() {
+        let raw = vec![0, 0, 0, 1, 2];
+        let serialised = parse_then_serialise(&raw);
+
+        assert_eq!(raw, serialised);
+    }
+
+    #[test]
+    fn parse_serialise_preserves_uninterested() {
+        let raw = vec![0, 0, 0, 1, 3];
+        let serialised = parse_then_serialise(&raw);
+
+        assert_eq!(raw, serialised);
+    }
+
+    #[test]
+    fn parse_serialise_preserves_have() {
+        let raw = vec![0, 0, 0, 5, 4, 1, 2, 3, 4];
+        let serialised = parse_then_serialise(&raw);
+
+        assert_eq!(raw, serialised);
+    }
+
+    #[test]
+    fn parse_serialise_preserves_bitfield() {
+        let raw = vec![0, 0, 0, 6, 5, 3, 1, 4, 1, 5];
+        let serialised = parse_then_serialise(&raw);
+
+        assert_eq!(raw, serialised);
+    }
+
+    #[test]
+    fn parse_serialise_preserves_request() {
+        let raw = vec![0, 0, 0, 13, 6, 1, 2, 3, 4, 9, 9, 9, 9, 2, 4, 6, 8];
+        let serialised = parse_then_serialise(&raw);
+
+        assert_eq!(raw, serialised);
+    }
+
+    #[test]
+    fn parse_serialise_preserves_piece() {
+        let raw = vec![0, 0, 0, 14, 7, 4, 4, 4, 4, 2, 1, 7, 8, 20, 40, 60, 80, 100];
+        let serialised = parse_then_serialise(&raw);
+
+        assert_eq!(raw, serialised);
+    }
+
+    #[test]
+    fn parse_serialise_preserves_cancel() {
+        let raw = vec![0, 0, 0, 13, 8, 2, 3, 5, 7, 9, 9, 9, 9, 1, 0, 1, 0];
+        let serialised = parse_then_serialise(&raw);
+
+        assert_eq!(raw, serialised);
     }
 }

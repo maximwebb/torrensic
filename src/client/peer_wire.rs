@@ -58,7 +58,7 @@ pub(crate) async fn run(
                 }
             }
             Message::Have(Have { piece_index }) => {
-                peer_pieces.set(piece_index, true);
+                peer_pieces.set(piece_index.try_into().unwrap(), true);
             }
             Message::Piece(Piece {
                 index,
