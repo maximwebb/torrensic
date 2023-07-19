@@ -40,10 +40,7 @@ pub(crate) async fn run(
             return Ok(());
         }
         // TODO: change this to async.
-        let msg = match conn.pop().await {
-            Some(v) => v,
-            None => continue,
-        };
+        let msg = conn.pop().await?;
 
         println!("{}", msg.print());
         match msg {

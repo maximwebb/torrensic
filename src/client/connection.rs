@@ -56,11 +56,19 @@ impl Connection {
     }
 
     // Updates message queue by polling read task, and returns top message if it exists
-    pub(crate) async fn pop(&mut self) -> Option<Message> {
-        let (send, recv) = oneshot::channel();
-        let _ = self.sender.send(MessageRequest { respond_to: send }).await;
-        let msg_queue = recv.await.unwrap();
-        self.msg_queue.splice(0..0, msg_queue);
+    pub(crate) async fn pop(&mut self) -> Result<Message, Box<dyn Error>> {
+        let msg = loop {
+            self.refresh_msg_queue().await?;
+            match self.msg_queue.pop() {
+                Some(v) => break v,
+                None => continue,
+            }
+        };
+        Ok(msg)
+    }
+
+    pub(crate) async fn try_pop(&mut self) -> Option<Message> {
+        let _ = self.refresh_msg_queue().await;
         self.msg_queue.pop()
     }
 
@@ -87,6 +95,14 @@ impl Connection {
             length: md.block_len(piece_index, block_index),
         });
         self.wr.write_all(&request_msg.serialise()).await?;
+        Ok(())
+    }
+
+    async fn refresh_msg_queue(&mut self) -> Result<(), Box<dyn Error>> {
+        let (send, recv) = oneshot::channel();
+        let _ = self.sender.send(MessageRequest { respond_to: send }).await;
+        let msg_queue = recv.await.unwrap();
+        self.msg_queue.splice(0..0, msg_queue);
         Ok(())
     }
 }
