@@ -1,3 +1,5 @@
+use std::mem;
+
 use bitvec::prelude::*;
 
 use crate::builder::file_builder;
@@ -35,6 +37,9 @@ pub(crate) async fn run(
 
     let mut piece_index: u32 = 0;
     let mut block_index: u32 = 0;
+
+    let mut data_buf = vec![0; md.info.piece_length.try_into().unwrap()];
+
     loop {
         if piece_index == md.num_pieces().try_into().unwrap() {
             return Ok(());
@@ -67,9 +72,14 @@ pub(crate) async fn run(
             }) => {
                 if index == piece_index && begin == (block_index * (2 << 13)) {
                     println!("Received block {block_index} from piece {piece_index}");
-                    file_builder::write(md, output_dir, piece_index, begin, block)?;
+                    let begin_usize: usize = begin.try_into().unwrap();
+                    data_buf.splice(begin_usize..begin_usize+block.len(), block);
+
                     if block_index + 1 == md.num_blocks() {
+                        let data = mem::replace(&mut data_buf, vec![0; md.info.piece_length.try_into().unwrap()]);
+                        file_builder::write(md, output_dir, piece_index, 0, &data)?;
                         client_pieces.set(piece_index.try_into().unwrap(), true);
+
                         block_index = 0;
                         piece_index += 1;
                     } else {

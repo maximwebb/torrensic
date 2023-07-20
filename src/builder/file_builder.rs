@@ -29,14 +29,14 @@ pub(crate) fn create(md: &Metadata, dir: &String) -> io::Result<()> {
     Ok(())
 }
 
+//TODO: decide whether to remove begin parameter.
 pub(crate) fn write(
     md: &Metadata,
     dir: &String,
     index: u32,
     begin: u32,
-    data: Vec<u8>,
+    data: &Vec<u8>,
 ) -> io::Result<()> {
-    // Should this be usize?
     let start_pos: u32 = md.info.piece_length * index + begin;
     let end_pos: u32 = start_pos + u32::try_from(data.len()).unwrap();
     let mut cur_pos: u32 = 0;

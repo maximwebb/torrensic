@@ -29,7 +29,7 @@ impl Connection {
         let addr = format!("{}:{}", peer.ip, peer.port);
         let addr_ = addr.clone();
         let socket = TcpStream::connect(addr);
-        let socket = match timeout(Duration::from_millis(5000), socket).await {
+        let socket = match timeout(Duration::from_millis(3000), socket).await {
             Ok(v) => match v {
                 Ok(v) => v,
                 Err(e) => return Err(Box::new(e)),
