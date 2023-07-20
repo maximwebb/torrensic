@@ -5,14 +5,20 @@ use std::{
     path::Path,
 };
 
+use bitvec::{prelude::Msb0, vec::BitVec};
+
 use crate::parser::{fileinfo::FileInfo, metadata::Metadata};
 
-pub(crate) fn create(md: &Metadata, dir: &String) -> io::Result<()> {
+pub(crate) fn create(md: &Metadata, dir: &String, overwrite: bool) -> io::Result<()> {
     let files: &Vec<FileInfo> = &md.info.files;
     let remove_dir = &format!("{}/{}", dir, &md.info.name);
     if Path::new(remove_dir).is_dir() {
-        println!("Removing existing files in {remove_dir}.");
-        fs::remove_dir_all(remove_dir)?;
+        if overwrite {
+            println!("Removing existing files in {remove_dir}.");
+            fs::remove_dir_all(remove_dir)?;
+        } else {
+            return Ok(());
+        }
     }
 
     for file in files {
@@ -25,6 +31,14 @@ pub(crate) fn create(md: &Metadata, dir: &String) -> io::Result<()> {
         f.seek(SeekFrom::Start((file.length - 1).into())).unwrap();
         f.write_all(&[0]).unwrap();
     }
+
+    // Create empty bitfield to track piece progress.
+    let path = &format!("{}/{}/bitfield", dir, &md.info.name);
+    let bitfield_size = (md.num_pieces() + 7) / 8;
+    let mut f = fs::File::create(path)?;
+    f.seek(SeekFrom::Start((bitfield_size - 1).try_into().unwrap()))
+        .unwrap();
+    f.write_all(&[0]).unwrap();
 
     Ok(())
 }
@@ -62,5 +76,24 @@ pub(crate) fn write(
         cur_pos += file.length;
     }
 
+    // Update bitfield
+    let mut bitfield = load_bitfield(md, dir)?;
+    bitfield.set(index.try_into().unwrap(), true);
+    let path = &format!("{}/{}/bitfield", dir, &md.info.name);
+    let mut f = File::options().write(true).open(path)?;
+    f.seek(SeekFrom::Start(0))?;
+    f.write_all(bitfield.as_raw_slice())?;
+
     Ok(())
+}
+
+pub(crate) fn load_bitfield(md: &Metadata, dir: &String) -> io::Result<BitVec<u8, Msb0>> {
+    let path_str = &format!("{}/{}/bitfield", dir, &md.info.name);
+    let raw = match fs::read(path_str) {
+        Ok(file) => file,
+        Err(e) => return Err(e),
+    };
+
+    let bitfield: BitVec<u8, Msb0> = BitVec::from_iter(raw.iter());
+    Ok(bitfield)
 }

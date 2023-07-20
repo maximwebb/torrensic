@@ -163,8 +163,8 @@ fn announce_msg(md: &Metadata, conn_id: u64, trans_id: u32, peer_id: Option<Vec<
     };
     let downloaded: u64 = 0;
 
-    let _num_pieces: u32 = md.info.pieces.len().try_into().unwrap();
-    let left: u64 = (&md.info.piece_length * _num_pieces).into();
+    let _num_pieces: u64 = md.info.pieces.len().try_into().unwrap();
+    let left: u64 = (md.info.piece_length as u64 * _num_pieces).into();
     let uploaded: u64 = 0;
     let event: u32 = 0;
     let ip: u32 = 0;

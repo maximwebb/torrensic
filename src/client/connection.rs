@@ -26,6 +26,7 @@ pub struct Connection {
 
 impl Connection {
     pub(crate) async fn new(peer: &PeerInfo, md: &Metadata) -> Result<Self, Box<dyn Error>> {
+        // let addr = "185.70.186.197:6881";
         let addr = format!("{}:{}", peer.ip, peer.port);
         let addr_ = addr.clone();
         let socket = TcpStream::connect(addr);

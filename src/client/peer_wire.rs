@@ -27,7 +27,8 @@ pub(crate) async fn run(
         peer_interested: false,
     };
 
-    let mut client_pieces: BitVec<u8, Msb0> = BitVec::<u8, Msb0>::repeat(false, md.num_pieces());
+    let mut client_pieces: BitVec<u8, Msb0> = file_builder::load_bitfield(md, output_dir)?;
+    // let mut client_pieces: BitVec<u8, Msb0> = BitVec::<u8, Msb0>::repeat(false, md.num_pieces());
     let mut peer_pieces: BitVec<u8, Msb0> = BitVec::<u8, Msb0>::repeat(false, md.num_pieces());
 
     let bitfield_msg = Bitfield {
@@ -35,7 +36,10 @@ pub(crate) async fn run(
     };
     let _ = conn.push(Message::from(bitfield_msg)).await?;
 
-    let mut piece_index: u32 = 0;
+    let mut piece_index: u32 = match client_pieces.first_zero() {
+        Some(v) => v.try_into().unwrap(),
+        None => 0,
+    };
     let mut block_index: u32 = 0;
 
     let mut data_buf = vec![0; md.info.piece_length.try_into().unwrap()];
@@ -44,14 +48,15 @@ pub(crate) async fn run(
         if piece_index == md.num_pieces().try_into().unwrap() {
             return Ok(());
         }
-        // TODO: change this to async.
+
         let msg = conn.pop().await?;
 
         println!("{}", msg.print());
         match msg {
             Message::Cancel(_) => return Ok(()),
             Message::Bitfield(Bitfield { bitfield: raw }) => {
-                peer_pieces = BitVec::<_, Msb0>::from_vec(raw[0..md.num_pieces() / 8].to_vec());
+                peer_pieces =
+                    BitVec::<_, Msb0>::from_vec(raw[0..(md.num_pieces() + 7) / 8].to_vec());
                 let matched_pieces = peer_pieces.clone() & !client_pieces.clone();
                 if matched_pieces.any() {
                     peer_state.client_interested = true;
@@ -73,13 +78,16 @@ pub(crate) async fn run(
                 if index == piece_index && begin == (block_index * (2 << 13)) {
                     println!("Received block {block_index} from piece {piece_index}");
                     let begin_usize: usize = begin.try_into().unwrap();
-                    data_buf.splice(begin_usize..begin_usize+block.len(), block);
+                    data_buf.splice(begin_usize..begin_usize + block.len(), block);
 
                     if block_index + 1 == md.num_blocks() {
-                        let data = mem::replace(&mut data_buf, vec![0; md.info.piece_length.try_into().unwrap()]);
+                        let data = mem::replace(
+                            &mut data_buf,
+                            vec![0; md.info.piece_length.try_into().unwrap()],
+                        );
                         file_builder::write(md, output_dir, piece_index, 0, &data)?;
-                        client_pieces.set(piece_index.try_into().unwrap(), true);
 
+                        client_pieces.set(piece_index.try_into().unwrap(), true);
                         block_index = 0;
                         piece_index += 1;
                     } else {
