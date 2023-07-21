@@ -172,3 +172,9 @@ impl ToBencode for PeerInfo {
         Ok(())
     }
 }
+
+impl PeerInfo {
+    pub fn to_string(&self) -> String {
+        format!("{}:{}", self.ip, self.port)
+    }
+}

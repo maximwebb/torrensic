@@ -6,7 +6,7 @@ use tokio::{
     time::timeout,
 };
 
-use crate::client::message::{parse, Message};
+use super::super::message::{Message, parse};
 
 use super::MessageRequest;
 

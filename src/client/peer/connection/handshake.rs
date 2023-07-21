@@ -9,7 +9,6 @@ use tokio::{
 use crate::parser::{metadata::Metadata, trackerinfo::PeerInfo};
 
 pub(crate) async fn handshake(
-    peer: &PeerInfo,
     md: &Metadata,
     rd: &mut ReadHalf<TcpStream>,
     wr: &mut WriteHalf<TcpStream>,

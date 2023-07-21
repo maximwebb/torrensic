@@ -24,15 +24,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tracker_info = client::tracker::req_tracker_info(md).await?;
     println!("Found {} peers.", { tracker_info.peers.len() });
 
-    for peer in &tracker_info.peers {
-        match client::peer_wire::run(&peer, md, output_dir).await {
-            Ok(_) => {
-                println!("Torrent download complete!");
-                return Ok(())
-            },
-            Err(e) => println!("{:?}", e),
-        }
-    }
+    // for peer in &tracker_info.peers {
+    //     match client::peer_wire::run(&peer, md, output_dir).await {
+    //         Ok(_) => {
+    //             println!("Torrent download complete!");
+    //             return Ok(())
+    //         },
+    //         Err(e) => println!("{:?}", e),
+    //     }
+    // }
 
     Ok(())
 }
