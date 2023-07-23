@@ -1,24 +1,26 @@
 use std::sync::Arc;
 
-use tokio::sync::{mpsc, oneshot};
+use bitvec::{vec::BitVec, prelude::Msb0};
+use tokio::sync::{mpsc, oneshot, Mutex};
 
 use crate::parser::metadata::Metadata;
 
 use self::wire_protocol_task::{WireProtocolTask, run_proto_task};
 
+use super::peer_manager::BitVecMutex;
+
 mod connection;
 mod message;
 mod wire_protocol_task;
 
-//TODO: get basic task spawning working
 pub struct Peer {
     sender: mpsc::Sender<Command>,
 }
 
 impl Peer {
-    pub(crate) fn new(addr: &str, md: Arc<Metadata>, output_dir: Arc<str>) -> Self {
+    pub(crate) fn new(addr: &str, md: Arc<Metadata>, output_dir: Arc<str>, client_pieces: BitVecMutex) -> Self {
         let (sender, receiver) = mpsc::channel(8);
-        let proto_task = WireProtocolTask::new(receiver, md, addr, output_dir);
+        let proto_task = WireProtocolTask::new(receiver, md, addr, output_dir, client_pieces);
         tokio::spawn(run_proto_task(proto_task));
 
         Peer {

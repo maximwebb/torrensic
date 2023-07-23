@@ -47,6 +47,7 @@ impl ReadTask {
             let mut buf = [0; 17000];
             let read_fut = self.rd.read(&mut buf[..]);
             let n = match timeout(Duration::from_millis(300), read_fut).await {
+                // TODO: fix crash upon peer connection reset.
                 Ok(v) => v.unwrap(),
                 Err(_) => 0,
             };

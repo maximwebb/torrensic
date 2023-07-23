@@ -1,9 +1,13 @@
+use std::cmp::min;
 use std::mem;
 use std::sync::Arc;
+use std::time::Duration;
 
 use bitvec::prelude::*;
+use rand::Rng;
 use tokio::sync::mpsc::Receiver;
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, Mutex};
+use tokio::time::{sleep, self, Instant};
 
 use super::message::bitfield::Bitfield;
 use super::message::have::Have;
@@ -12,6 +16,7 @@ use super::message::{Message, PeerWireMessage};
 use super::{Command, PeerState};
 
 use crate::builder::file_builder;
+use crate::client::peer_manager::BitVecMutex;
 use crate::parser::{metadata::Metadata, trackerinfo::PeerInfo};
 
 use super::connection::Connection;
@@ -22,6 +27,7 @@ pub struct WireProtocolTask {
     md: Arc<Metadata>,
     addr: Arc<str>,
     output_dir: Arc<str>,
+    client_pieces: BitVecMutex,
 }
 
 impl WireProtocolTask {
@@ -30,6 +36,7 @@ impl WireProtocolTask {
         md: Arc<Metadata>,
         addr: &str,
         output_dir: Arc<str>,
+        client_pieces: BitVecMutex,
     ) -> Self {
         WireProtocolTask {
             receiver,
@@ -42,10 +49,13 @@ impl WireProtocolTask {
             md,
             addr: addr.into(),
             output_dir,
+            client_pieces,
         }
     }
 
     pub(crate) async fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let start = Instant::now();
+        println!("[{}] Started", self.addr);
         let mut conn = Connection::new(&self.addr, &self.md).await?;
 
         let mut peer_state = PeerState {
@@ -55,22 +65,25 @@ impl WireProtocolTask {
             peer_interested: false,
         };
 
-        let mut client_pieces: BitVec<u8, Msb0> =
-            file_builder::load_bitfield(&self.md, &self.output_dir)?;
         let mut peer_pieces: BitVec<u8, Msb0> =
             BitVec::<u8, Msb0>::repeat(false, self.md.num_pieces());
 
-
-        let bitfield_msg = Bitfield {
-            bitfield: bitvec_to_bytes(&client_pieces),
-        };
-        let _ = conn.push(Message::from(bitfield_msg)).await?;
-
-        let mut piece_index: u32 = match client_pieces.first_zero() {
-            Some(v) => v.try_into().unwrap(),
-            None => 0,
-        };
+        let mut piece_index = 0;
         let mut block_index: u32 = 0;
+        {
+            // Acquire client_pieces mutex to send bitfield message to peer and determine piece index.
+            let mut pieces = self.client_pieces.lock().await;
+            let bitfield_msg = Bitfield {
+                bitfield: bitvec_to_bytes(&pieces),
+            };
+            let _ = conn.push(Message::from(bitfield_msg)).await?;
+            piece_index = match pieces.first_zero() {
+                Some(v) => v.try_into().unwrap(),
+                None => 0, //TODO: shouldn't this be return Ok(())?
+            };
+            println!("[{}] Acquiring piece {piece_index}", self.addr);
+            pieces.set(0, true);
+        }
 
         let mut data_buf = vec![0; self.md.info.piece_length.try_into().unwrap()];
 
@@ -81,21 +94,25 @@ impl WireProtocolTask {
 
             let msg = conn.pop().await?;
 
-            println!("{}", msg.print());
+            // println!("[{}], {}", self.addr, msg.print());
             match msg {
                 Message::Cancel(_) => return Ok(()),
                 Message::Bitfield(Bitfield { bitfield: raw }) => {
                     peer_pieces = BitVec::<_, Msb0>::from_vec(
                         raw[0..(self.md.num_pieces() + 7) / 8].to_vec(),
                     );
-                    let matched_pieces = peer_pieces.clone() & !client_pieces.clone();
-                    if matched_pieces.any() {
-                        peer_state.client_interested = true;
-                        if !peer_state.client_choked {
-                            conn.request_block(&self.md, piece_index, block_index)
-                                .await?;
-                        } else {
-                            conn.send_interested().await?;
+                    {
+                        let pieces = self.client_pieces.lock().await;
+                        // TODO: only submit requests for matched pieces.
+                        let matched_pieces = peer_pieces.clone() & !pieces.clone();
+                        if matched_pieces.any() {
+                            peer_state.client_interested = true;
+                            if !peer_state.client_choked {
+                                conn.request_block(&self.md, piece_index, block_index)
+                                    .await?;
+                            } else {
+                                conn.send_interested().await?;
+                            }
                         }
                     }
                 }
@@ -108,24 +125,33 @@ impl WireProtocolTask {
                     block,
                 }) => {
                     if index == piece_index && begin == (block_index * (2 << 13)) {
-                        println!("Received block {block_index} from piece {piece_index}");
                         let begin_usize: usize = begin.try_into().unwrap();
-                        data_buf.splice(begin_usize..begin_usize + block.len(), block);
+                        let block_len = min(block.len(), 2 << 13);
+                        data_buf.splice(begin_usize..begin_usize + block_len, block);
 
                         if block_index + 1 == self.md.num_blocks() {
+                            println!("[{}] Downloaded piece {piece_index}", self.addr);
                             let data = mem::replace(
                                 &mut data_buf,
                                 vec![0; self.md.info.piece_length.try_into().unwrap()],
                             );
                             file_builder::write(&self.md, &self.output_dir, piece_index, 0, &data)?;
-                            client_pieces.set(piece_index.try_into().unwrap(), true);
-                            if client_pieces.all() {
-                                println!("Torrent download complete!");
-                                return Ok(())
+                            {
+                                let mut pieces = self.client_pieces.lock().await;
+                                pieces.set(piece_index.try_into().unwrap(), true);
+                                if pieces.all() {
+                                    println!("Thread completed in {} secs!", start.elapsed().as_secs_f32());
+                                    return Ok(());
+                                } else {
+                                    piece_index = pieces
+                                        .first_zero()
+                                        .expect("Error: client_pieces bitfield is not all-ones, yet has no zeroes.")
+                                        .try_into()
+                                        .unwrap();
+                                    block_index = 0;
+                                    pieces.set(piece_index.try_into().unwrap(), true);
+                                }
                             }
-
-                            block_index = 0;
-                            piece_index += 1;
                         } else {
                             block_index += 1;
                         }
@@ -178,7 +204,7 @@ fn bitvec_to_bytes(bits: &BitVec<u8, Msb0>) -> Vec<u8> {
     res
 }
 
-// TODO: move this to impl and store peer/md/output_dir in WireProtocolTask
+// TODO: move this to impl
 pub(crate) async fn run_proto_task(mut proto_task: WireProtocolTask) {
     let _ = proto_task.run().await;
 }

@@ -26,7 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tracker_info = client::tracker::req_tracker_info(&md).await?;
     println!("Found {} peers.", { tracker_info.peers.len() });
 
-    let peer_manager = PeerManager::new(md, tracker_info.peers, &output_dir);
+    let peer_manager = PeerManager::new(md, tracker_info.peers, &output_dir)?;
     let _ = peer_manager.run().await;
 
     Ok(())
