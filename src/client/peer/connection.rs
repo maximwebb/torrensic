@@ -1,6 +1,7 @@
 mod handshake;
 mod read_task;
 
+use std::sync::Arc;
 use std::{error::Error, time::Duration};
 
 use tokio::sync::{mpsc, oneshot};
@@ -28,7 +29,7 @@ impl Connection {
     pub(crate) async fn new(addr: &str, md: &Metadata) -> Result<Self, Box<dyn Error>> {
         // let addr = "185.70.186.197:6881";
         // let addr = format!("{}:{}", peer.ip, peer.port);
-        let addr_ = addr.clone();
+        let addr_: &str = &addr;
         let socket = TcpStream::connect(addr);
         let socket = match timeout(Duration::from_millis(3000), socket).await {
             Ok(v) => match v {
@@ -39,7 +40,7 @@ impl Connection {
         };
 
         let (mut rd, mut wr) = tokio::io::split(socket);
-        let rem = handshake(md, &mut rd, &mut wr).await?;
+        let rem = handshake(&md, &mut rd, &mut wr).await?;
 
         let (sender, receiver) = mpsc::channel(8);
 

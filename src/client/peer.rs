@@ -16,10 +16,10 @@ pub struct Peer {
 }
 
 impl Peer {
-    pub(crate) fn new(addr: &str, md: Arc<Metadata>, output_dir: &String) -> Self {
+    pub(crate) fn new(addr: &str, md: Arc<Metadata>, output_dir: Arc<str>) -> Self {
         let (sender, receiver) = mpsc::channel(8);
-        let proto_task = WireProtocolTask::new(receiver);
-        tokio::spawn(run_proto_task(proto_task, addr, md, output_dir));
+        let proto_task = WireProtocolTask::new(receiver, md, addr, output_dir);
+        tokio::spawn(run_proto_task(proto_task));
 
         Peer {
             sender,

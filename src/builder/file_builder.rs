@@ -46,7 +46,7 @@ pub(crate) fn create(md: &Metadata, dir: &String, overwrite: bool) -> io::Result
 //TODO: decide whether to remove begin parameter.
 pub(crate) fn write(
     md: &Metadata,
-    dir: &String,
+    dir: &str,
     index: u32,
     begin: u32,
     data: &Vec<u8>,
@@ -87,13 +87,17 @@ pub(crate) fn write(
     Ok(())
 }
 
-pub(crate) fn load_bitfield(md: &Metadata, dir: &String) -> io::Result<BitVec<u8, Msb0>> {
+pub(crate) fn load_bitfield(md: &Metadata, dir: &str) -> io::Result<BitVec<u8, Msb0>> {
     let path_str = &format!("{}/{}/bitfield", dir, &md.info.name);
     let raw = match fs::read(path_str) {
         Ok(file) => file,
-        Err(e) => return Err(e),
+        Err(e) => {
+            println!("Error reading bitfield.");
+            return Err(e);
+        }
     };
 
-    let bitfield: BitVec<u8, Msb0> = BitVec::from_iter(raw.iter());
+    let mut bitfield: BitVec<u8, Msb0> = BitVec::from_iter(raw.iter());
+    bitfield.truncate(md.num_pieces());
     Ok(bitfield)
 }
