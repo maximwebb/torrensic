@@ -49,7 +49,7 @@ pub trait PeerWireMessage {
     fn name(&self) -> String;
 
     fn print(&self) -> String {
-        let payload_len = min(self.payload().len(), 60);
+        let payload_len = min(self.payload().len(), 12);
         match self.id() {
             Some(id) => format!(
                 "{}: <{:0>4}><{}><{:?}>",

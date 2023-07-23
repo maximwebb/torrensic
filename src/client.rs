@@ -1,4 +1,3 @@
-pub mod peer_wire;
+mod peer;
+pub mod peer_manager;
 pub mod tracker;
-pub mod message;
-pub mod connection;
