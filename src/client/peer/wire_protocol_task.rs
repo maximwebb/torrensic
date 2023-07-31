@@ -7,7 +7,7 @@ use bitvec::prelude::*;
 use rand::Rng;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::{oneshot, Mutex};
-use tokio::time::{sleep, self, Instant};
+use tokio::time::{self, sleep, Instant};
 
 use super::message::bitfield::Bitfield;
 use super::message::have::Have;
@@ -130,7 +130,11 @@ impl WireProtocolTask {
                         data_buf.splice(begin_usize..begin_usize + block_len, block);
 
                         if block_index + 1 == self.md.num_blocks() {
-                            println!("[{}] Downloaded piece {piece_index}", self.addr);
+                            println!(
+                                "[{}] Downloaded piece {piece_index}/{}",
+                                self.addr,
+                                self.md.num_pieces()
+                            );
                             let data = mem::replace(
                                 &mut data_buf,
                                 vec![0; self.md.info.piece_length.try_into().unwrap()],
@@ -140,7 +144,10 @@ impl WireProtocolTask {
                                 let mut pieces = self.client_pieces.lock().await;
                                 pieces.set(piece_index.try_into().unwrap(), true);
                                 if pieces.all() {
-                                    println!("Thread completed in {} secs!", start.elapsed().as_secs_f32());
+                                    println!(
+                                        "Thread completed in {} secs!",
+                                        start.elapsed().as_secs_f32()
+                                    );
                                     return Ok(());
                                 } else {
                                     piece_index = pieces

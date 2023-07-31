@@ -39,7 +39,7 @@ impl FromBencode for Info {
                 (b"files", val) => {
                     files = Vec::decode_bencode_object(val).ok();
                 }
-                (b"name", val) => {
+                (b"name", val) | (b"display-name", val) => {
                     name = String::decode_bencode_object(val).ok();
                 }
                 (b"pieces", val) => {
