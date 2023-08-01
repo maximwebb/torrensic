@@ -53,7 +53,7 @@ impl Connection {
         let read_task = ReadTask::new(rd, rem, receiver);
         tokio::spawn(run_read_task(read_task));
 
-        println!("Completed handshake with {}", addr_);
+        // println!("Completed handshake with {}", addr_);
         Ok(conn)
     }
 
