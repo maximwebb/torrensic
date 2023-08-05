@@ -7,7 +7,7 @@ use std::future;
 
 use builder::file_builder;
 use client::peer_manager::run_peer_manager_task;
-use tokio::{self, sync::mpsc, join};
+use tokio::{self, join, sync::mpsc};
 
 use parser::metadata::read_metadata;
 

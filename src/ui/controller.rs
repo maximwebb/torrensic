@@ -5,15 +5,21 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use std::{error::Error, io, time::Duration};
-use tokio::{sync::{mpsc, oneshot}, time::timeout};
+use tokio::{
+    sync::{mpsc, oneshot},
+    time::timeout,
+};
 
 use ratatui::{
     backend::CrosstermBackend,
+    prelude::Rect,
     widgets::{Block, Borders},
     Terminal,
 };
 
 use crate::client::peer_manager::StatusRequest;
+
+use super::widgets::progress::Progress;
 
 pub(crate) struct Controller {
     pub(crate) sender: mpsc::Sender<StatusRequest>,
@@ -30,18 +36,24 @@ impl Controller {
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
+        let progress = Progress {};
         loop {
-            let status_str = match self.get_status().await {
-                Some((a, b)) => format!("Downloaded {a}/{b}"),
-                None => "Pending...".to_owned(),
+            let (pieces, total) = match self.get_status().await {
+                Some(pair) => pair,
+                None => (0, 0),
             };
 
             terminal.draw(|f| {
                 let size = f.size();
-                let block = Block::default()
-                    .title(status_str)
-                    .borders(Borders::ALL);
+                let progress_size = Rect {
+                    x: size.x + 2,
+                    y: size.y + 2,
+                    width: size.width / 2,
+                    height: size.height / 2,
+                };
+                let block = Block::default().title("Torrensic").borders(Borders::ALL);
                 f.render_widget(block, size);
+                progress.draw(f, progress_size, pieces, total);
             })?;
             if event::poll(Duration::from_millis(250))? {
                 if let Event::Key(key) = event::read()? {
@@ -53,7 +65,6 @@ impl Controller {
             }
         }
 
-        let chan = self.sender.to_owned();
         disable_raw_mode()?;
         execute!(
             terminal.backend_mut(),
@@ -77,7 +88,7 @@ impl Controller {
         return match status {
             Ok(pair) => Some(pair),
             Err(_) => None,
-        }
+        };
     }
 }
 
