@@ -6,7 +6,7 @@ use crossterm::{
 };
 use std::{error::Error, io, time::Duration};
 use tokio::{
-    sync::{mpsc, oneshot},
+    sync::{mpsc, oneshot, watch},
     time::timeout,
 };
 
@@ -17,17 +17,15 @@ use ratatui::{
     Terminal,
 };
 
-use crate::client::peer_manager::StatusRequest;
-
-use super::widgets::progress::Progress;
+use super::widgets::{progress_bar::ProgressBar, Draw};
 
 pub(crate) struct Controller {
-    pub(crate) sender: mpsc::Sender<StatusRequest>,
+    pub(crate) rx_progress: watch::Receiver<(u32, u32)>,
 }
 
 impl Controller {
-    pub(crate) fn new(sender: mpsc::Sender<StatusRequest>) -> Self {
-        Controller { sender }
+    pub(crate) fn new(rx_progress: watch::Receiver<(u32, u32)>) -> Self {
+        Controller { rx_progress }
     }
 
     async fn run(&mut self) -> Result<(), Box<dyn Error>> {
@@ -36,25 +34,19 @@ impl Controller {
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
-        let progress = Progress {};
+        let mut progress_bars = vec![ProgressBar {
+            rx_progress: self.rx_progress.clone(),
+        }];
         loop {
-            let (pieces, total) = match self.get_status().await {
-                Some(pair) => pair,
-                None => (0, 0),
-            };
-
             terminal.draw(|f| {
                 let size = f.size();
-                let progress_size = Rect {
-                    x: size.x + 2,
-                    y: size.y + 2,
-                    width: size.width / 2,
-                    height: size.height / 2,
-                };
+
                 let block = Block::default().title("Torrensic").borders(Borders::ALL);
                 f.render_widget(block, size);
-                progress.draw(f, progress_size, pieces, total);
+                progress_bars[0].draw(f, size);
             })?;
+
+            
             if event::poll(Duration::from_millis(250))? {
                 if let Event::Key(key) = event::read()? {
                     if KeyCode::Char('q') == key.code {
@@ -76,19 +68,8 @@ impl Controller {
         Ok(())
     }
 
-    async fn get_status(&mut self) -> Option<(u32, u32)> {
-        let (chan, recv) = oneshot::channel();
-        let _ = self.sender.send(StatusRequest { chan }).await;
-
-        let status = match timeout(Duration::from_millis(200), recv).await {
-            Ok(res) => res,
-            Err(_) => return None,
-        };
-
-        return match status {
-            Ok(pair) => Some(pair),
-            Err(_) => None,
-        };
+    async fn get_status(&mut self) -> (u32, u32) {
+        *self.rx_progress.borrow()
     }
 }
 

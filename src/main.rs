@@ -7,7 +7,7 @@ use std::future;
 
 use builder::file_builder;
 use client::peer_manager::run_peer_manager_task;
-use tokio::{self, join, sync::mpsc};
+use tokio::{self, join, sync::{mpsc, watch}};
 
 use parser::metadata::read_metadata;
 
@@ -32,10 +32,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tracker_info = client::tracker::req_tracker_info(&md).await?;
     // println!("Found {} peers.", { tracker_info.peers.len() });
 
-    let (sender, receiver) = mpsc::channel(8);
+    let (tx_progress, rx_progress) = watch::channel((0, 0));
 
-    let peer_manager = PeerManager::new(md, tracker_info.peers, &output_dir, receiver)?;
-    let ui_controller = Controller::new(sender);
+    let peer_manager = PeerManager::new(md, tracker_info.peers, &output_dir, tx_progress)?;
+    let ui_controller = Controller::new(rx_progress);
 
     tokio::spawn(run_peer_manager_task(peer_manager));
     run_controller_task(ui_controller).await;
