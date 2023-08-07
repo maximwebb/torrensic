@@ -4,20 +4,26 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use std::{error::Error, io, time::Duration};
-use tokio::{
-    sync::{mpsc, oneshot, watch},
-    time::timeout,
+use std::{
+    cmp::{max, min},
+    error::Error,
+    io,
+    time::Duration,
 };
+use tokio::sync::watch;
 
 use ratatui::{
     backend::CrosstermBackend,
-    prelude::Rect,
+    prelude::{Constraint, Direction, Layout, Rect},
     widgets::{Block, Borders},
     Terminal,
 };
 
-use super::widgets::{progress_bar::ProgressBar, Draw};
+use super::{
+    components::{title::Title, torrent_progress::TorrentProgress},
+    widgets::torrent_list::TorrentList,
+    Draw,
+};
 
 pub(crate) struct Controller {
     pub(crate) rx_progress: watch::Receiver<(u32, u32)>,
@@ -34,24 +40,46 @@ impl Controller {
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
-        let mut progress_bars = vec![ProgressBar {
-            rx_progress: self.rx_progress.clone(),
-        }];
+
+        let mut title = Title {};
+
+        let mut torrent_list = TorrentList {
+            torrents: vec![
+                TorrentProgress {
+                    rx_progress: self.rx_progress.clone(),
+                    name: "Torrent 1".to_string(),
+                    selected: true,
+                },
+                TorrentProgress {
+                    rx_progress: self.rx_progress.clone(),
+                    name: "Torrent 2".to_string(),
+                    selected: false,
+                },
+            ],
+        };
+
+        let mut selected_torrent: u16 = 0;
+        let torrent_list_len = 2;
+
         loop {
             terminal.draw(|f| {
-                let size = f.size();
+                let (title_layout, body_layout) = Self::calculate_layout(f.size());
 
-                let block = Block::default().title("Torrensic").borders(Borders::ALL);
-                f.render_widget(block, size);
-                progress_bars[0].draw(f, size);
+                title.draw(f, title_layout);
+                torrent_list.draw(f, body_layout[0]);
             })?;
 
-            
             if event::poll(Duration::from_millis(250))? {
                 if let Event::Key(key) = event::read()? {
                     if KeyCode::Char('q') == key.code {
                         println!("Quit");
                         break;
+                    } else if KeyCode::Up == key.code {
+                        selected_torrent = max(0, selected_torrent - 1);
+                        torrent_list.set_torrent(selected_torrent);
+                    } else if KeyCode::Down == key.code {
+                        selected_torrent = min(torrent_list_len - 1, selected_torrent + 1);
+                        torrent_list.set_torrent(selected_torrent);
                     }
                 }
             }
@@ -68,8 +96,18 @@ impl Controller {
         Ok(())
     }
 
-    async fn get_status(&mut self) -> (u32, u32) {
-        *self.rx_progress.borrow()
+    fn calculate_layout(area: Rect) -> (Rect, Vec<Rect>) {
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(vec![Constraint::Length(3), Constraint::Ratio(5, 6)])
+            .split(area);
+
+        let body = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints(vec![Constraint::Ratio(2, 5), Constraint::Ratio(3, 5)])
+            .split(layout[1]);
+
+        return (layout[0], body.to_vec());
     }
 }
 
