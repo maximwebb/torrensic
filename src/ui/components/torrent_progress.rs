@@ -25,8 +25,7 @@ impl Draw for TorrentProgress {
             .title_alignment(Alignment::Right)
             .borders(Borders::ALL);
         let text = Paragraph::new(vec![
-            text::Line::from(format!("{} - {pieces}/{total} pieces", self.name)),
-            text::Line::from(""),
+            text::Line::from(format!("{}", self.name)),
         ]);
         let line_gauge = LineGauge::default()
             .gauge_style(Style::default().fg(Color::Magenta))

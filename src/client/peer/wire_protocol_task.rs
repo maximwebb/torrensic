@@ -79,7 +79,7 @@ impl WireProtocolTask {
             let _ = conn.push(Message::from(bitfield_msg)).await?;
             piece_index = match pieces.first_zero() {
                 Some(v) => v.try_into().unwrap(),
-                None => 0, //TODO: shouldn't this be return Ok(())?
+                None => 0, //TODO: shouldn't this be return?
             };
             // println!("[{}] Acquiring piece {piece_index}", self.addr);
             pieces.set(0, true);
