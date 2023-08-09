@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use bitvec::{prelude::Msb0, vec::BitVec};
-use tokio::sync::{mpsc, oneshot, watch, Mutex};
+use tokio::sync::{watch, Mutex};
 
 use crate::{
     builder::file_builder,

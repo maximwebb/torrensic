@@ -3,15 +3,12 @@ mod client;
 mod parser;
 mod ui;
 
-use std::{future, sync::Arc};
+use std::sync::Arc;
 
 use bitvec::{prelude::Msb0, vec::BitVec};
 use builder::file_builder;
 use client::peer_manager::run_peer_manager_task;
-use tokio::{
-    self, join,
-    sync::{mpsc, watch},
-};
+use tokio::{self, sync::watch};
 
 use parser::metadata::read_metadata;
 

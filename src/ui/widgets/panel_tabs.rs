@@ -1,8 +1,8 @@
 use ratatui::{
-    prelude::{Alignment, Constraint, Direction, Layout, Rect},
+    prelude::{Constraint, Direction, Layout, Rect},
     style::{Color, Style, Stylize},
-    text::{Line, Text},
-    widgets::{Block, BorderType, Borders, Paragraph, Tabs},
+    text::Line,
+    widgets::{Block, BorderType, Borders, Tabs},
 };
 
 use crate::ui::Draw;

@@ -19,10 +19,12 @@ pub(crate) struct PiecesInfo {
 impl Draw for PiecesInfo {
     fn draw<B: Backend>(&mut self, f: &mut Frame<B>, area: Rect) {
         self.buf = self.rx_pieces.borrow().to_owned();
-        self.width = f.size().width;
+        self.width = f.size().width / 2;
 
         let canvas = Canvas::default()
             .marker(Marker::Block)
+            .x_bounds([0.0, self.width.into()])
+            .y_bounds([0.0, self.width.into()])
             .paint(|ctx| ctx.draw(self));
         f.render_widget(canvas, area);
     }

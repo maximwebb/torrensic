@@ -5,7 +5,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use sha1::digest::crypto_common::Key;
+
 use std::{
     cmp::{max, min},
     error::Error,
