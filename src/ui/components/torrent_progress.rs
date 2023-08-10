@@ -1,8 +1,8 @@
 use ratatui::{
     prelude::{Alignment, Backend, Constraint, Layout, Rect},
-    style::{Color, Modifier, Style, Stylize},
+    style::{Color, Style, Stylize},
     symbols, text,
-    widgets::{Block, BorderType, Borders, LineGauge, Paragraph},
+    widgets::{Block, Borders, LineGauge, Paragraph},
     Frame,
 };
 use tokio::sync::watch;

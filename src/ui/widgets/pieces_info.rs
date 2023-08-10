@@ -1,9 +1,12 @@
 use bitvec::{prelude::Msb0, vec::BitVec};
 use ratatui::{
-    prelude::{Backend, Rect},
+    prelude::{Backend, Constraint, Layout, Rect},
     style::Color,
     symbols::Marker,
-    widgets::canvas::{Canvas, Painter, Shape},
+    widgets::{
+        canvas::{Canvas, Painter, Shape},
+        Paragraph,
+    },
     Frame,
 };
 use tokio::sync::watch;
@@ -21,12 +24,22 @@ impl Draw for PiecesInfo {
         self.buf = self.rx_pieces.borrow().to_owned();
         self.width = f.size().width / 2;
 
+        let (text_area, heatmap_area) = Self::calculate_layout(area);
+
+        let text = Paragraph::new(format!(
+            "Downloaded {}/{} pieces.",
+            self.buf.count_ones(),
+            self.buf.len()
+        ));
+
         let canvas = Canvas::default()
             .marker(Marker::Block)
             .x_bounds([0.0, self.width.into()])
             .y_bounds([0.0, self.width.into()])
             .paint(|ctx| ctx.draw(self));
-        f.render_widget(canvas, area);
+
+        f.render_widget(text, text_area);
+        f.render_widget(canvas, heatmap_area);
     }
 }
 
@@ -52,5 +65,13 @@ impl PiecesInfo {
             buf,
             width: 20,
         }
+    }
+
+    fn calculate_layout(area: Rect) -> (Rect, Rect) {
+        let layout = Layout::default()
+            .constraints(vec![(Constraint::Length(2)), (Constraint::Min(1))])
+            .split(area);
+
+        return (layout[0], layout[1]);
     }
 }
