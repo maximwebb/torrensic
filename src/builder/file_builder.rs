@@ -14,7 +14,7 @@ pub(crate) fn create(md: &Metadata, dir: &String, overwrite: bool) -> io::Result
     let remove_dir = &format!("{}/{}", dir, &md.info.name);
     if Path::new(remove_dir).is_dir() {
         if overwrite {
-            println!("Removing existing files in {remove_dir}.");
+            // println!("Removing existing files in {remove_dir}.");
             fs::remove_dir_all(remove_dir)?;
         } else {
             return Ok(());

@@ -55,7 +55,7 @@ impl WireProtocolTask {
 
     pub(crate) async fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let start = Instant::now();
-        println!("[{}] Started", self.addr);
+        // println!("[{}] Started", self.addr);
         let mut conn = Connection::new(&self.addr, &self.md).await?;
 
         let mut peer_state = PeerState {
@@ -79,9 +79,9 @@ impl WireProtocolTask {
             let _ = conn.push(Message::from(bitfield_msg)).await?;
             piece_index = match pieces.first_zero() {
                 Some(v) => v.try_into().unwrap(),
-                None => 0, //TODO: shouldn't this be return Ok(())?
+                None => 0, //TODO: shouldn't this be return?
             };
-            println!("[{}] Acquiring piece {piece_index}", self.addr);
+            // println!("[{}] Acquiring piece {piece_index}", self.addr);
             pieces.set(0, true);
         }
 
@@ -130,11 +130,11 @@ impl WireProtocolTask {
                         data_buf.splice(begin_usize..begin_usize + block_len, block);
 
                         if block_index + 1 == self.md.num_blocks() {
-                            println!(
-                                "[{}] Downloaded piece {piece_index}/{}",
-                                self.addr,
-                                self.md.num_pieces()
-                            );
+                            // println!(
+                            //     "[{}] Downloaded piece {piece_index}/{}",
+                            //     self.addr,
+                            //     self.md.num_pieces()
+                            // );
                             let data = mem::replace(
                                 &mut data_buf,
                                 vec![0; self.md.info.piece_length.try_into().unwrap()],
@@ -144,10 +144,10 @@ impl WireProtocolTask {
                                 let mut pieces = self.client_pieces.lock().await;
                                 pieces.set(piece_index.try_into().unwrap(), true);
                                 if pieces.all() {
-                                    println!(
-                                        "Thread completed in {} secs!",
-                                        start.elapsed().as_secs_f32()
-                                    );
+                                    // println!(
+                                    //     "Thread completed in {} secs!",
+                                    //     start.elapsed().as_secs_f32()
+                                    // );
                                     return Ok(());
                                 } else {
                                     piece_index = pieces
@@ -169,7 +169,7 @@ impl WireProtocolTask {
                             conn.send_interested().await?;
                         }
                     } else {
-                        println!("Received wrong block");
+                        // println!("Received wrong block");
                     }
                 }
                 Message::Choke(_) => {
