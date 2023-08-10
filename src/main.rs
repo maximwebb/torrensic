@@ -19,7 +19,7 @@ use crate::{
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let torrent_file = String::from("torrents/test_folder.torrent");
+    let torrent_file = String::from("torrents/homeowners.torrent");
     let output_dir = String::from("downloads");
     let md = read_metadata(&torrent_file).unwrap();
 
@@ -35,6 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (tx_progress, rx_progress) = watch::channel((0, 0));
     let (tx_pieces, rx_pieces) = watch::channel(BitVec::<u8, Msb0>::repeat(false, md.num_pieces()));
+    let (tx_speed, rx_speed) = watch::channel(0.0);
     let md = Arc::new(md);
 
     let peer_manager = PeerManager::new(
@@ -43,8 +44,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &output_dir,
         tx_progress,
         tx_pieces,
+        tx_speed,
     )?;
-    let ui_controller = Controller::new(md.clone(), rx_progress, rx_pieces);
+    let ui_controller = Controller::new(md.clone(), rx_progress, rx_pieces, rx_speed);
 
     tokio::spawn(run_peer_manager_task(peer_manager));
     run_controller_task(ui_controller).await;

@@ -36,6 +36,7 @@ pub(crate) struct Controller {
     pub(crate) md: Arc<Metadata>,
     pub(crate) rx_progress: watch::Receiver<(u32, u32)>,
     pub(crate) rx_pieces: watch::Receiver<BitVec<u8, Msb0>>,
+    pub(crate) rx_speed: watch::Receiver<f32>,
     selected_torrent: u16,
     panel_state: PanelState,
 }
@@ -45,11 +46,13 @@ impl Controller {
         md: Arc<Metadata>,
         rx_progress: watch::Receiver<(u32, u32)>,
         rx_pieces: watch::Receiver<BitVec<u8, Msb0>>,
+        rx_speed: watch::Receiver<f32>,
     ) -> Self {
         Controller {
             md,
             rx_progress,
             rx_pieces,
+            rx_speed,
             selected_torrent: 0,
             panel_state: PanelState::Hidden,
         }
@@ -65,16 +68,18 @@ impl Controller {
         let mut title = Title {};
 
         let mut torrent_list = TorrentList::new(vec![
-            TorrentProgress {
-                rx_progress: self.rx_progress.clone(),
-                name: (&self.md.info.name).to_string(),
-                selected: true,
-            },
-            TorrentProgress {
-                rx_progress: self.rx_progress.clone(),
-                name: "Torrent 2".to_string(),
-                selected: false,
-            },
+            TorrentProgress::new(
+                self.rx_progress.clone(),
+                self.rx_speed.clone(),
+                (&self.md.info.name).to_string(),
+                true,
+            ),
+            TorrentProgress::new(
+                self.rx_progress.clone(),
+                self.rx_speed.clone(),
+                "Torrent 2".to_string(),
+                false,
+            ),
         ]);
 
         let mut panel_tabs = PanelTabs::new();
@@ -131,9 +136,8 @@ impl Controller {
                                 torrent_list.set_selected(true);
                                 panel_tabs.set_selected(false);
                             } else if key.code == KeyCode::Right {
-                                self.panel_state = PanelState::PiecesInfo(PiecesInfo::new(
-                                    self.rx_pieces.clone(),
-                                ));
+                                self.panel_state =
+                                    PanelState::PiecesInfo(PiecesInfo::new(self.rx_pieces.clone()));
                                 panel_tabs.set_tab(1);
                             }
                         }
