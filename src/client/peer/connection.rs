@@ -4,6 +4,7 @@ mod read_task;
 use std::sync::Arc;
 use std::{error::Error, time::Duration};
 
+use tokio::sync::oneshot::error::RecvError;
 use tokio::sync::{mpsc, oneshot};
 use tokio::{
     io::{AsyncWriteExt, WriteHalf},
@@ -26,7 +27,11 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub(crate) async fn new(addr: &str, md: &Metadata) -> Result<Self, Box<dyn Error>> {
+    pub(crate) async fn new(
+        addr: &str,
+        md: &Metadata,
+        cancel_sender: mpsc::Sender<()>,
+    ) -> Result<Self, Box<dyn Error>> {
         // let addr = "185.70.186.197:6881";
         // let addr = format!("{}:{}", peer.ip, peer.port);
         let addr_: &str = &addr;
@@ -50,7 +55,7 @@ impl Connection {
             sender,
         };
 
-        let read_task = ReadTask::new(rd, rem, receiver);
+        let read_task = ReadTask::new(rd, rem, receiver, cancel_sender);
         tokio::spawn(run_read_task(read_task));
 
         // println!("Completed handshake with {}", addr_);
@@ -58,9 +63,12 @@ impl Connection {
     }
 
     // Updates message queue by polling read task, and returns top message if it exists
-    pub(crate) async fn pop(&mut self) -> Result<Message, Box<dyn Error>> {
+    pub(crate) async fn pop(&mut self) -> Result<Message, RecvError> {
         let msg = loop {
-            self.refresh_msg_queue().await?;
+            match self.refresh_msg_queue().await {
+                Ok(_) => {},
+                Err(err) => return Err(err)
+            }
             match self.msg_queue.pop() {
                 Some(v) => break v,
                 None => continue,
@@ -100,10 +108,15 @@ impl Connection {
         Ok(())
     }
 
-    async fn refresh_msg_queue(&mut self) -> Result<(), Box<dyn Error>> {
+    async fn refresh_msg_queue(&mut self) -> Result<(), RecvError> {
         let (send, recv) = oneshot::channel();
         let _ = self.sender.send(MessageRequest { respond_to: send }).await;
-        let msg_queue = recv.await.unwrap();
+        let msg_queue = match recv.await {
+            Ok(queue) => queue,
+            Err(err) => {
+                return Err(err)
+            },
+        };
         self.msg_queue.splice(0..0, msg_queue);
         Ok(())
     }

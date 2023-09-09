@@ -19,7 +19,7 @@ use crate::{
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let torrent_file = String::from("torrents/homeowners.torrent");
+    let torrent_file = String::from("torrents/airfryer.torrent");
     let output_dir = String::from("downloads");
     let md = read_metadata(&torrent_file).unwrap();
 

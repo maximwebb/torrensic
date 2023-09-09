@@ -1,11 +1,13 @@
 use std::cmp::min;
+use std::error::Error;
+use std::io::{Error as IOError, ErrorKind};
 use std::mem;
 use std::sync::Arc;
 use std::time::Duration;
 
 use bitvec::prelude::*;
 use rand::Rng;
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::{self, Receiver};
 use tokio::sync::{oneshot, Mutex};
 use tokio::time::{self, sleep, Instant};
 
@@ -56,7 +58,10 @@ impl WireProtocolTask {
     pub(crate) async fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let start = Instant::now();
         // println!("[{}] Started", self.addr);
-        let mut conn = Connection::new(&self.addr, &self.md).await?;
+
+        let (cancel_sender, mut cancel_receiver) = mpsc::channel::<()>(1);
+
+        let mut conn = Connection::new(&self.addr, &self.md, cancel_sender).await?;
 
         let mut peer_state = PeerState {
             client_choked: true,
@@ -92,7 +97,27 @@ impl WireProtocolTask {
                 return Ok(());
             }
 
-            let msg = conn.pop().await?;
+            let msg = tokio::select! {
+                v = conn.pop() => {
+                    match v {
+                        Ok(v) => Ok(v),
+                        Err(_) => Err(()),
+                    }
+                }
+                _ = cancel_receiver.recv() => {
+                    Err(())
+                }
+            };
+
+            let msg = match msg {
+                Ok(v) => v,
+                Err(_) => {
+                    return Err(Box::new(IOError::new(
+                        ErrorKind::ConnectionReset,
+                        "Connection reset by peer",
+                    )))
+                }
+            };
 
             // println!("[{}], {}", self.addr, msg.print());
             match msg {

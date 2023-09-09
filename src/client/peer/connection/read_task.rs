@@ -1,12 +1,12 @@
-use std::{mem, time::Duration};
+use std::{mem, time::Duration, error::Error};
 use tokio::{
     io::{AsyncReadExt, ReadHalf},
     net::TcpStream,
-    sync::mpsc,
+    sync::{mpsc, oneshot},
     time::timeout,
 };
 
-use super::super::message::{Message, parse};
+use super::super::message::{parse, Message};
 
 use super::MessageRequest;
 
@@ -15,6 +15,7 @@ pub struct ReadTask {
     buf: Vec<u8>,
     msg_queue: Vec<Message>,
     receiver: mpsc::Receiver<MessageRequest>,
+    cancel_sender: mpsc::Sender<()>,
 }
 
 impl ReadTask {
@@ -22,12 +23,14 @@ impl ReadTask {
         rd: ReadHalf<TcpStream>,
         buf: Vec<u8>,
         receiver: mpsc::Receiver<MessageRequest>,
+        cancel_sender: mpsc::Sender<()>,
     ) -> Self {
         ReadTask {
             rd,
             buf,
             msg_queue: Vec::new(),
             receiver,
+            cancel_sender,
         }
     }
 
@@ -47,8 +50,13 @@ impl ReadTask {
             let mut buf = [0; 17000];
             let read_fut = self.rd.read(&mut buf[..]);
             let n = match timeout(Duration::from_millis(300), read_fut).await {
-                // TODO: fix crash upon peer connection reset.
-                Ok(v) => v.unwrap(),
+                Ok(v) => match v {
+                    Ok(v) => v,
+                    Err(err) => {
+                        let _ = self.cancel_sender.send(()).await;
+                        break;
+                    }
+                },
                 Err(_) => 0,
             };
 
