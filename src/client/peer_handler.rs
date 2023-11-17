@@ -40,6 +40,7 @@ pub struct PeerHandler {
     output_dir: Arc<str>,
     client_pieces: BitVecMutex,
     tx_piece_index_req: mpsc::Sender<PieceIndexRequest>,
+    tx_piece_download: mpsc::Sender<PieceDownload>,
     tx_peer_disconnect: mpsc::Sender<PeerDisconnect>,
 }
 
@@ -50,6 +51,7 @@ impl PeerHandler {
         output_dir: Arc<str>,
         client_pieces: BitVecMutex,
         tx_piece_index_req: mpsc::Sender<PieceIndexRequest>,
+        tx_piece_download: mpsc::Sender<PieceDownload>,
         tx_peer_disconnect: mpsc::Sender<PeerDisconnect>,
     ) {
         let handler = PeerHandler {
@@ -65,6 +67,7 @@ impl PeerHandler {
             output_dir,
             client_pieces,
             tx_piece_index_req,
+            tx_piece_download,
             tx_peer_disconnect,
         };
 
@@ -175,9 +178,9 @@ impl PeerHandler {
                                 vec![0; self.md.info.piece_length.try_into().unwrap()],
                             );
                             file_builder::write(&self.md, &self.output_dir, index, 0, &data)?;
+                            let _ = self.tx_piece_download.send(PieceDownload { index }).await;
 
                             // Request piece from peer manager - if no valid ones, we are no longer interested in peer.
-                            // TODO: inform PM that we acquired a piece.
                             piece_index = self.get_piece_index().await;
                             self.peer_state.client_interested = piece_index.is_some();
 
@@ -262,6 +265,10 @@ fn bitvec_to_bytes(bits: &BitVec<u8, Msb0>) -> Vec<u8> {
 pub(crate) struct PieceIndexRequest {
     pub chan: oneshot::Sender<Option<u32>>,
     pub peer_bitfield: BitVec<u8, Msb0>,
+}
+
+pub(crate) struct PieceDownload {
+    pub index: u32
 }
 
 pub(crate) struct PeerDisconnect {

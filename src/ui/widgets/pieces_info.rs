@@ -14,22 +14,25 @@ use tokio::sync::watch;
 use crate::ui::Draw;
 
 pub(crate) struct PiecesInfo {
-    pub(crate) rx_pieces: watch::Receiver<BitVec<u8, Msb0>>,
-    buf: BitVec<u8, Msb0>,
+    pub(crate) rx_in_progress_pieces: watch::Receiver<BitVec<u8, Msb0>>,
+    pub(crate) rx_downloaded_pieces: watch::Receiver<BitVec<u8, Msb0>>,
+    in_progress_pieces: BitVec<u8, Msb0>,
+    downloaded_pieces: BitVec<u8, Msb0>,
     width: u16,
 }
 
 impl Draw for PiecesInfo {
     fn draw<B: Backend>(&mut self, f: &mut Frame<B>, area: Rect) {
-        self.buf = self.rx_pieces.borrow().to_owned();
+        self.in_progress_pieces = self.rx_in_progress_pieces.borrow().to_owned();
+        self.downloaded_pieces = self.rx_downloaded_pieces.borrow().to_owned();
         self.width = f.size().width / 2;
 
         let (text_area, heatmap_area) = Self::calculate_layout(area);
 
         let text = Paragraph::new(format!(
             "Downloaded {}/{} pieces.",
-            self.buf.count_ones(),
-            self.buf.len()
+            self.downloaded_pieces.count_ones(),
+            self.downloaded_pieces.len()
         ));
 
         let canvas = Canvas::default()
@@ -45,10 +48,13 @@ impl Draw for PiecesInfo {
 
 impl Shape for PiecesInfo {
     fn draw(&self, painter: &mut Painter) {
-        for i in 0..self.buf.len() {
-            let color = if self.buf[i] {
+        for i in 0..self.downloaded_pieces.len() {
+            let color = if self.downloaded_pieces[i] {
                 Color::LightGreen
-            } else {
+            } else if self.in_progress_pieces[i] {
+                Color::Yellow
+            }
+            else {
                 Color::LightRed
             };
             let (x, y) = (i % (self.width as usize), i / (self.width as usize));
@@ -58,11 +64,14 @@ impl Shape for PiecesInfo {
 }
 
 impl PiecesInfo {
-    pub(crate) fn new(rx_pieces: watch::Receiver<BitVec<u8, Msb0>>) -> Self {
-        let buf = rx_pieces.borrow().to_owned();
+    pub(crate) fn new(rx_in_progress_pieces: watch::Receiver<BitVec<u8, Msb0>>, rx_downloaded_pieces: watch::Receiver<BitVec<u8, Msb0>>) -> Self {
+        let in_progress_pieces = rx_in_progress_pieces.borrow().to_owned();
+        let downloaded_pieces = rx_downloaded_pieces.borrow().to_owned();
         PiecesInfo {
-            rx_pieces,
-            buf,
+            rx_in_progress_pieces,
+            rx_downloaded_pieces,
+            in_progress_pieces,
+            downloaded_pieces,
             width: 20,
         }
     }

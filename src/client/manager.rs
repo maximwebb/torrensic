@@ -11,20 +11,28 @@ use crate::{
     parser::{metadata::Metadata, trackerinfo::PeerInfo},
 };
 
-use super::peer_handler::{PieceIndexRequest, PeerDisconnect, PeerHandler};
+use super::peer_handler::{PieceIndexRequest, PeerDisconnect, PeerHandler, PieceDownload};
 
 
 pub(crate) type BitVecMutex = Arc<Mutex<BitVec<u8, Msb0>>>;
 
+/* TODO for next time:
+    - The in-progress stats seem to be messing with the downloaded ones
+    - The UI might be overlaying - though is unlikely, as downloaded: x/y is also wrong
+    - Test if pieces are actually being downloaded - might be a bug in peer handler?
+    - Inspect downloaded_pieces and in_progress_pieces as vectors.
 
+*/
 pub(crate) struct Manager {
     md: Arc<Metadata>,
-    downloaded_pieces: BitVecMutex,
     download_history: RingBuffer,
+    // TODO: distinguish UI from peer handler channels
     tx_progress: watch::Sender<(u32, u32)>,
-    tx_pieces: watch::Sender<BitVec<u8, Msb0>>,
+    tx_in_progress_pieces: watch::Sender<BitVec<u8, Msb0>>,
+    tx_downloaded_pieces: watch::Sender<BitVec<u8, Msb0>>,
     tx_speed: watch::Sender<f32>,
     rx_piece_index_req: mpsc::Receiver<PieceIndexRequest>,
+    rx_piece_download: mpsc::Receiver<PieceDownload>,
     rx_peer_disconnect: mpsc::Receiver<PeerDisconnect>,
 }
 
@@ -35,13 +43,17 @@ impl Manager {
         peers: Vec<PeerInfo>,
         output_dir: &str,
         tx_progress: watch::Sender<(u32, u32)>,
-        tx_pieces: watch::Sender<BitVec<u8, Msb0>>,
+        tx_in_progress_pieces: watch::Sender<BitVec<u8, Msb0>>,
+        tx_downloaded_pieces: watch::Sender<BitVec<u8, Msb0>>,
         tx_speed: watch::Sender<f32>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        // TODO: do these need to be shared with peer handlers?
         let client_pieces: BitVec<u8, Msb0> = file_builder::load_bitfield(&md, &output_dir)?;
         let client_pieces_ref = Arc::new(Mutex::new(client_pieces));
 
+        // Peer handler channels
         let (tx_piece_index_req, rx_piece_index_req) = mpsc::channel(8);
+        let (tx_piece_download, rx_piece_download) = mpsc::channel(8);
         let (tx_peer_disconnect, rx_peer_disconnect) = mpsc::channel(8);
 
         let dir_ref: Arc<str> = Arc::from(output_dir);
@@ -53,6 +65,7 @@ impl Manager {
                 dir_ref.clone(),
                 client_pieces_ref.clone(),
                 tx_piece_index_req.clone(),
+                tx_piece_download.clone(),
                 tx_peer_disconnect.clone(),
             )
         }
@@ -61,12 +74,13 @@ impl Manager {
 
         Ok(Manager {
             md,
-            downloaded_pieces: client_pieces_ref,
             download_history,
             tx_progress,
-            tx_pieces,
+            tx_in_progress_pieces,
+            tx_downloaded_pieces,
             tx_speed,
             rx_piece_index_req,
+            rx_piece_download,
             rx_peer_disconnect,
         })
     }
@@ -76,6 +90,7 @@ impl Manager {
         let mut download_speed_interval = time::interval(Duration::from_millis(100));
 
         let mut in_progress_pieces = BitVec::<u8, Msb0>::repeat(false, self.md.num_pieces());
+        let mut downloaded_pieces = BitVec::<u8, Msb0>::repeat(false, self.md.num_pieces());
 
         loop {
             tokio::select! {
@@ -84,26 +99,33 @@ impl Manager {
 
                     {
                         // let downloaded_pieces = self.client_pieces.lock().await;
-                        let res = Self::respond_piece_index_req(req, &in_progress_pieces);
+                        let res = Self::respond_piece_index_req(req, &in_progress_pieces, &downloaded_pieces);
 
                         if let Some(index) = res {
+                            println!("Requesting {index}");
                             in_progress_pieces.set(index.try_into().unwrap(), true);
                         }
                     }
+                }
+                piece_download = self.rx_piece_download.recv() => {
+                    let index = piece_download.expect("Error receiving piece download update").index;
+
+                    in_progress_pieces.set(index.try_into().unwrap(), false);
+                    downloaded_pieces.set(index.try_into().unwrap(), true);
+                    println!("Acquired {index}")
                 }
                 peer_disconnect = self.rx_peer_disconnect.recv() => {
                     let payload = peer_disconnect.expect("Error: Peer disconnected too quickly");
                     println!("Peer disconnected (addr: {})", payload.addr);
                 }
                 _ = ui_refresh_interval.tick() => {
-                    // TODO: change from in progress to downloaded
-                    // let pieces = self.client_pieces.lock().await;
                     let _ = self.tx_progress.send((
-                        in_progress_pieces.count_ones().try_into().unwrap(),
-                        in_progress_pieces.len().try_into().unwrap(),
+                        downloaded_pieces.count_ones().try_into().unwrap(),
+                        downloaded_pieces.len().try_into().unwrap(),
                     ));
 
-                    let _ = self.tx_pieces.send(in_progress_pieces.clone());
+                    let _ = self.tx_in_progress_pieces.send(in_progress_pieces.clone());
+                    let _ = self.tx_downloaded_pieces.send(downloaded_pieces.clone());
 
                     let speed = (self.download_history.average() / 0.1) * (self.md.info.piece_length as f32 / 1_000.0);
 
@@ -112,7 +134,7 @@ impl Manager {
                 _ = download_speed_interval.tick() => {
                     // TODO: Again, switch from in progress to downloaded.
                     // let pieces = self.client_pieces.lock().await;
-                    self.download_history.push(in_progress_pieces.count_ones().try_into().unwrap());
+                    self.download_history.push(downloaded_pieces.count_ones().try_into().unwrap());
                 }
             }
         }
@@ -122,12 +144,13 @@ impl Manager {
     // TODO add downloaded_pieces bitfield back
     fn respond_piece_index_req(
         req: PieceIndexRequest,
-        in_progress: &BitVec<u8, Msb0>
+        in_progress: &BitVec<u8, Msb0>,
+        downloaded: &BitVec<u8, Msb0>,
     ) -> Option<u32> {
         {
             let (chan, peer_bitfield) = (req.chan, req.peer_bitfield);
 
-            let valid_pieces = ! (!peer_bitfield | in_progress);
+            let valid_pieces = ! (!peer_bitfield | in_progress | downloaded);
             let res = valid_pieces.first_one().map(|v| v as u32);
 
             match chan.send(res) {
@@ -182,18 +205,3 @@ impl RingBuffer {
         return (diff_total as f32) / (self.capacity as f32);
     }
 }
-
-
-// async fn get_piece_index(&self) -> Option<u32> {
-//     let (tx, rx) = oneshot::channel();
-//     let r = self.tx_piece_index_req.send(Message{respond_to: tx}).await;
-
-//     match rx.await {
-//         Ok(v) => {
-//             return v
-//         },
-//         Err(e) => {
-//             return None
-//         },
-//     }
-// }
