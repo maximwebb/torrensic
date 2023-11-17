@@ -1,6 +1,6 @@
 use bendy::{
     decoding::{Error as DecError, FromBencode, ResultExt},
-    encoding::{Encoder, Error as EncError, ToBencode},
+    encoding::{Error as EncError, ToBencode},
 };
 
 use sha1::{Digest, Sha1};

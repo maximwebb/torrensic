@@ -11,16 +11,15 @@ use crate::{
     parser::{metadata::Metadata, trackerinfo::PeerInfo},
 };
 
-use super::peer::{Peer, PeerDisconnect, PieceIndexRequest};
+use super::peer_handler::{PieceIndexRequest, PeerDisconnect, PeerHandler};
+
 
 pub(crate) type BitVecMutex = Arc<Mutex<BitVec<u8, Msb0>>>;
 
 
-pub(crate) struct PeerManager {
+pub(crate) struct Manager {
     md: Arc<Metadata>,
-    peers: Vec<Peer>,
-    output_dir: Arc<str>,
-    client_pieces: BitVecMutex, // Should this be "downloaded_pieces"?
+    downloaded_pieces: BitVecMutex,
     download_history: RingBuffer,
     tx_progress: watch::Sender<(u32, u32)>,
     tx_pieces: watch::Sender<BitVec<u8, Msb0>>,
@@ -29,8 +28,8 @@ pub(crate) struct PeerManager {
     rx_peer_disconnect: mpsc::Receiver<PeerDisconnect>,
 }
 
-impl PeerManager {
-    // Start all threads on creation
+impl Manager {
+    // All peer handler threads are started on creation
     pub(crate) fn new(
         md: Arc<Metadata>,
         peers: Vec<PeerInfo>,
@@ -47,27 +46,22 @@ impl PeerManager {
 
         let dir_ref: Arc<str> = Arc::from(output_dir);
 
-        let peers: Vec<Peer> = peers
-            .iter()
-            .map(|peer| {
-                Peer::new(
-                    &peer.to_string(),
-                    md.clone(),
-                    dir_ref.clone(),
-                    client_pieces_ref.clone(),
-                    tx_piece_index_req.clone(),
-                    tx_peer_disconnect.clone(),
-                )
-            })
-            .collect();
+        for peer in peers {
+            PeerHandler::init(
+                md.clone(),
+                &peer.to_string(),
+                dir_ref.clone(),
+                client_pieces_ref.clone(),
+                tx_piece_index_req.clone(),
+                tx_peer_disconnect.clone(),
+            )
+        }
 
         let download_history = RingBuffer::new(15);
 
-        Ok(PeerManager {
+        Ok(Manager {
             md,
-            peers,
-            output_dir: dir_ref,
-            client_pieces: client_pieces_ref,
+            downloaded_pieces: client_pieces_ref,
             download_history,
             tx_progress,
             tx_pieces,
@@ -148,7 +142,7 @@ impl PeerManager {
     }
 }
 
-pub(crate) async fn run_peer_manager_task(mut peer_manager: PeerManager) {
+pub(crate) async fn run_peer_manager_task(mut peer_manager: Manager) {
     peer_manager.run().await;
 }
 

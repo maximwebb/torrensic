@@ -1,7 +1,6 @@
 mod handshake;
 mod read_task;
 
-use std::sync::Arc;
 use std::{error::Error, time::Duration};
 
 use tokio::sync::oneshot::error::RecvError;
@@ -12,8 +11,8 @@ use tokio::{
     time::timeout,
 };
 
-use crate::client::peer::connection::read_task::{run_read_task, ReadTask};
-use crate::parser::{metadata::Metadata, trackerinfo::PeerInfo};
+use read_task::{run_read_task, ReadTask};
+use crate::parser::metadata::Metadata;
 
 use self::handshake::handshake;
 use super::message::interested::Interested;
@@ -32,9 +31,6 @@ impl Connection {
         md: &Metadata,
         cancel_sender: mpsc::Sender<()>,
     ) -> Result<Self, Box<dyn Error>> {
-        // let addr = "185.70.186.197:6881";
-        // let addr = format!("{}:{}", peer.ip, peer.port);
-        let addr_: &str = &addr;
         let socket = TcpStream::connect(addr);
         let socket = match timeout(Duration::from_millis(3000), socket).await {
             Ok(v) => match v {
@@ -57,8 +53,7 @@ impl Connection {
 
         let read_task = ReadTask::new(rd, rem, receiver, cancel_sender);
         tokio::spawn(run_read_task(read_task));
-
-        // println!("Completed handshake with {}", addr_);
+        
         Ok(conn)
     }
 
@@ -76,12 +71,7 @@ impl Connection {
         };
         Ok(msg)
     }
-
-    pub(crate) async fn try_pop(&mut self) -> Option<Message> {
-        let _ = self.refresh_msg_queue().await;
-        self.msg_queue.pop()
-    }
-
+    
     pub(crate) async fn push(&mut self, msg: Message) -> Result<(), Box<dyn Error>> {
         self.wr.write_all(&msg.serialise()).await?;
         Ok(())

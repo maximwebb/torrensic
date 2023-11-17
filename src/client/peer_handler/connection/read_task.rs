@@ -1,8 +1,8 @@
-use std::{mem, time::Duration, error::Error};
+use std::{mem, time::Duration};
 use tokio::{
     io::{AsyncReadExt, ReadHalf},
     net::TcpStream,
-    sync::{mpsc, oneshot},
+    sync::mpsc,
     time::timeout,
 };
 
@@ -52,7 +52,7 @@ impl ReadTask {
             let n = match timeout(Duration::from_millis(300), read_fut).await {
                 Ok(v) => match v {
                     Ok(v) => v,
-                    Err(err) => {
+                    Err(_) => {
                         let _ = self.cancel_sender.send(()).await;
                         break;
                     }

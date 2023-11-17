@@ -6,7 +6,7 @@ use tokio::{
     net::TcpStream,
 };
 
-use crate::parser::{metadata::Metadata, trackerinfo::PeerInfo};
+use crate::parser::metadata::Metadata;
 
 pub(crate) async fn handshake(
     md: &Metadata,

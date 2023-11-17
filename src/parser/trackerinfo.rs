@@ -79,8 +79,8 @@ impl TrackerInfo {
 
         // TODO: include leecher/seeder info in TrackerInfo
         let interval = interval.read_u32::<BigEndian>().unwrap();
-        let leechers = leechers.read_u32::<BigEndian>().unwrap();
-        let seeders = seeders.read_u32::<BigEndian>().unwrap();
+        let _leechers = leechers.read_u32::<BigEndian>().unwrap();
+        let _seeders = seeders.read_u32::<BigEndian>().unwrap();
 
         let raw_peers: Vec<_> = raw[20..]
             .to_vec()

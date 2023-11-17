@@ -1,5 +1,7 @@
-use std::cmp::min;
+mod connection;
+mod message;
 
+use std::cmp::min;
 use std::io::{Error as IOError, ErrorKind};
 use std::mem;
 use std::sync::Arc;
@@ -7,32 +9,30 @@ use std::sync::Arc;
 use bitvec::prelude::*;
 
 use tokio::sync::mpsc::{self};
-
 use tokio::sync::oneshot;
 
 
-use super::message::bitfield::Bitfield;
-use super::message::have::Have;
-use super::message::piece::Piece;
-use super::message::Message;
-use super::{PeerDisconnect, PeerState, PieceIndexRequest};
+use message::bitfield::Bitfield;
+use message::have::Have;
+use message::piece::Piece;
+use message::Message;
 
 use crate::builder::file_builder;
-use crate::client::peer_manager::BitVecMutex;
+use crate::client::manager::BitVecMutex;
 use crate::parser::metadata::Metadata;
 
-use super::connection::Connection;
+use connection::Connection;
 
 
 /* OVERVIEW TODO:
     - PM should respond to piece index requests
     - PM should keep track of how many peers are holding a given piece, and return the least common one
-    - Peer piece information should be left out of WireProtocolTask (i.e. send PM updates about what pieces the peers have, PM stores this data)
+    - Peer piece information should be left out of PeerHandler (i.e. send PM updates about what pieces the peers have, PM stores this data)
     - PM should track which pieces are being acquired, and which have already been acquired (no need for shared state)
     - Client should inform PM when it finishes downloading a piece
 */
 
-pub struct WireProtocolTask {
+pub struct PeerHandler {
     peer_state: PeerState,
     peer_pieces: BitVec<u8, Msb0>, // TODO: store this in peer manager
     md: Arc<Metadata>,
@@ -43,16 +43,16 @@ pub struct WireProtocolTask {
     tx_peer_disconnect: mpsc::Sender<PeerDisconnect>,
 }
 
-impl WireProtocolTask {
-    pub(crate) fn new(
+impl PeerHandler {
+    pub(crate) fn init(
         md: Arc<Metadata>,
         addr: &str,
         output_dir: Arc<str>,
         client_pieces: BitVecMutex,
         tx_piece_index_req: mpsc::Sender<PieceIndexRequest>,
         tx_peer_disconnect: mpsc::Sender<PeerDisconnect>,
-    ) -> Self {
-        WireProtocolTask {
+    ) {
+        let handler = PeerHandler {
             peer_state: PeerState {
                 client_choked: true,
                 client_interested: false,
@@ -66,7 +66,9 @@ impl WireProtocolTask {
             client_pieces,
             tx_piece_index_req,
             tx_peer_disconnect,
-        }
+        };
+
+        tokio::spawn(PeerHandler::start(handler));
     }
 
     pub(crate) async fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -226,21 +228,23 @@ impl WireProtocolTask {
 
     async fn get_piece_index(&self) -> Option<u32> {
         let (tx, rx) = oneshot::channel();
-        let r = self.tx_piece_index_req.send(PieceIndexRequest{chan: tx, peer_bitfield: self.peer_pieces.clone()}).await;
+        let _ = self.tx_piece_index_req.send(PieceIndexRequest{chan: tx, peer_bitfield: self.peer_pieces.clone()}).await;
 
         match rx.await {
             Ok(v) => {
-                if let Some(x) = v {
-                    // println!("Received piece index {}, ", x);
-                }
                 return v
             },
-            Err(e) => {
+            Err(_) => {
                 println!("Client received error");
                 return None
             },
         }
     }
+
+    async fn start(mut proto_task: PeerHandler) {
+        let _ = proto_task.run().await;
+    }
+    
 }
 
 fn bitvec_to_bytes(bits: &BitVec<u8, Msb0>) -> Vec<u8> {
@@ -255,7 +259,18 @@ fn bitvec_to_bytes(bits: &BitVec<u8, Msb0>) -> Vec<u8> {
     res
 }
 
-// TODO: move this to impl
-pub(crate) async fn run_proto_task(mut proto_task: WireProtocolTask) {
-    let _ = proto_task.run().await;
+pub(crate) struct PieceIndexRequest {
+    pub chan: oneshot::Sender<Option<u32>>,
+    pub peer_bitfield: BitVec<u8, Msb0>,
+}
+
+pub(crate) struct PeerDisconnect {
+    pub addr: Arc<str>,
+}
+
+pub(crate) struct PeerState {
+    client_choked: bool,
+    client_interested: bool,
+    peer_choked: bool,
+    peer_interested: bool,
 }

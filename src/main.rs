@@ -7,13 +7,13 @@ use std::sync::Arc;
 
 use bitvec::{prelude::Msb0, vec::BitVec};
 use builder::file_builder;
-use client::peer_manager::run_peer_manager_task;
+use client::manager::run_peer_manager_task;
 use tokio::{self, sync::watch};
 
 use parser::metadata::read_metadata;
 
 use crate::{
-    client::peer_manager::PeerManager,
+    client::manager::Manager,
     ui::controller::{run_controller_task, Controller},
 };
 
@@ -38,7 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (tx_speed, rx_speed) = watch::channel(0.0);
     let md = Arc::new(md);
 
-    let peer_manager = PeerManager::new(
+    let peer_manager = Manager::new(
         md.clone(),
         tracker_info.peers,
         &output_dir,

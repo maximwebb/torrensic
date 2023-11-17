@@ -1,3 +1,3 @@
-mod peer;
-pub mod peer_manager;
+mod peer_handler;
+pub mod manager;
 pub mod tracker;
