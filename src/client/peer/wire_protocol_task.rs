@@ -1,67 +1,79 @@
 use std::cmp::min;
-use std::error::Error;
+
 use std::io::{Error as IOError, ErrorKind};
 use std::mem;
 use std::sync::Arc;
-use std::time::Duration;
 
 use bitvec::prelude::*;
-use rand::Rng;
-use tokio::sync::mpsc::{self, Receiver};
-use tokio::sync::{oneshot, Mutex};
-use tokio::time::{self, sleep, Instant};
+
+use tokio::sync::mpsc::{self};
+
+use tokio::sync::oneshot;
+
 
 use super::message::bitfield::Bitfield;
 use super::message::have::Have;
 use super::message::piece::Piece;
-use super::message::{Message, PeerWireMessage};
-use super::{Command, PeerState};
+use super::message::Message;
+use super::{PeerDisconnect, PeerState, PieceIndexRequest};
 
 use crate::builder::file_builder;
 use crate::client::peer_manager::BitVecMutex;
-use crate::parser::{metadata::Metadata, trackerinfo::PeerInfo};
+use crate::parser::metadata::Metadata;
 
 use super::connection::Connection;
 
+
+/* OVERVIEW TODO:
+    - PM should respond to piece index requests
+    - PM should keep track of how many peers are holding a given piece, and return the least common one
+    - Peer piece information should be left out of WireProtocolTask (i.e. send PM updates about what pieces the peers have, PM stores this data)
+    - PM should track which pieces are being acquired, and which have already been acquired (no need for shared state)
+    - Client should inform PM when it finishes downloading a piece
+*/
+
 pub struct WireProtocolTask {
-    receiver: Receiver<Command>,
     peer_state: PeerState,
+    peer_pieces: BitVec<u8, Msb0>, // TODO: store this in peer manager
     md: Arc<Metadata>,
     addr: Arc<str>,
     output_dir: Arc<str>,
     client_pieces: BitVecMutex,
+    tx_piece_index_req: mpsc::Sender<PieceIndexRequest>,
+    tx_peer_disconnect: mpsc::Sender<PeerDisconnect>,
 }
 
 impl WireProtocolTask {
     pub(crate) fn new(
-        receiver: Receiver<Command>,
         md: Arc<Metadata>,
         addr: &str,
         output_dir: Arc<str>,
         client_pieces: BitVecMutex,
+        tx_piece_index_req: mpsc::Sender<PieceIndexRequest>,
+        tx_peer_disconnect: mpsc::Sender<PeerDisconnect>,
     ) -> Self {
         WireProtocolTask {
-            receiver,
             peer_state: PeerState {
                 client_choked: true,
                 client_interested: false,
                 peer_choked: true,
                 peer_interested: false,
             },
+            peer_pieces: BitVec::<u8, Msb0>::repeat(false, md.num_pieces()),
             md,
             addr: addr.into(),
             output_dir,
             client_pieces,
+            tx_piece_index_req,
+            tx_peer_disconnect,
         }
     }
 
     pub(crate) async fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let start = Instant::now();
-        // println!("[{}] Started", self.addr);
 
-        let (cancel_sender, mut cancel_receiver) = mpsc::channel::<()>(1);
+        let (tx_cancel, mut rx_cancel) = mpsc::channel::<()>(1);
 
-        let mut conn = Connection::new(&self.addr, &self.md, cancel_sender).await?;
+        let mut conn = Connection::new(&self.addr, &self.md, tx_cancel).await?;
 
         let mut peer_state = PeerState {
             client_choked: true,
@@ -70,11 +82,10 @@ impl WireProtocolTask {
             peer_interested: false,
         };
 
-        let mut peer_pieces: BitVec<u8, Msb0> =
-            BitVec::<u8, Msb0>::repeat(false, self.md.num_pieces());
 
-        let mut piece_index = 0;
         let mut block_index: u32 = 0;
+        let mut piece_index = None;
+
         {
             // Acquire client_pieces mutex to send bitfield message to peer and determine piece index.
             let mut pieces = self.client_pieces.lock().await;
@@ -82,20 +93,12 @@ impl WireProtocolTask {
                 bitfield: bitvec_to_bytes(&pieces),
             };
             let _ = conn.push(Message::from(bitfield_msg)).await?;
-            piece_index = match pieces.first_zero() {
-                Some(v) => v.try_into().unwrap(),
-                None => 0, //TODO: shouldn't this be return?
-            };
-            // println!("[{}] Acquiring piece {piece_index}", self.addr);
             pieces.set(0, true);
         }
 
         let mut data_buf = vec![0; self.md.info.piece_length.try_into().unwrap()];
 
         loop {
-            if piece_index == self.md.num_pieces().try_into().unwrap() {
-                return Ok(());
-            }
 
             let msg = tokio::select! {
                 v = conn.pop() => {
@@ -104,7 +107,7 @@ impl WireProtocolTask {
                         Err(_) => Err(()),
                     }
                 }
-                _ = cancel_receiver.recv() => {
+                _ = rx_cancel.recv() => {
                     Err(())
                 }
             };
@@ -112,89 +115,86 @@ impl WireProtocolTask {
             let msg = match msg {
                 Ok(v) => v,
                 Err(_) => {
+                    let _ = self
+                        .tx_peer_disconnect
+                        .send(PeerDisconnect {
+                            addr: self.addr.clone(),
+                        })
+                        .await;
                     return Err(Box::new(IOError::new(
                         ErrorKind::ConnectionReset,
                         "Connection reset by peer",
-                    )))
+                    )));
                 }
             };
 
-            // println!("[{}], {}", self.addr, msg.print());
             match msg {
                 Message::Cancel(_) => return Ok(()),
+
                 Message::Bitfield(Bitfield { bitfield: raw }) => {
-                    peer_pieces = BitVec::<_, Msb0>::from_vec(
+                    self.peer_pieces = BitVec::<_, Msb0>::from_vec(
                         raw[0..(self.md.num_pieces() + 7) / 8].to_vec(),
                     );
-                    {
-                        let pieces = self.client_pieces.lock().await;
-                        // TODO: only submit requests for matched pieces.
-                        let matched_pieces = peer_pieces.clone() & !pieces.clone();
-                        if matched_pieces.any() {
-                            peer_state.client_interested = true;
-                            if !peer_state.client_choked {
-                                conn.request_block(&self.md, piece_index, block_index)
-                                    .await?;
-                            } else {
-                                conn.send_interested().await?;
-                            }
+
+                    // Request piece index from peer manager
+                    piece_index = self.get_piece_index().await;
+                    self.peer_state.client_interested = piece_index.is_some();
+
+                    if let Some(index) = piece_index {
+
+                        if !peer_state.client_choked {
+                            conn.request_block(&self.md, index, block_index)
+                                .await?;
+                        } else {
+                            conn.send_interested().await?;
                         }
                     }
                 }
-                Message::Have(Have { piece_index }) => {
-                    peer_pieces.set(piece_index.try_into().unwrap(), true);
+                Message::Have(Have { piece_index: index }) => {
+                    self.peer_pieces.set(index.try_into().unwrap(), true);
+                    if piece_index.is_none() {
+                        piece_index = self.get_piece_index().await;
+                    }
                 }
                 Message::Piece(Piece {
                     index,
                     begin,
                     block,
                 }) => {
-                    if index == piece_index && begin == (block_index * (2 << 13)) {
+                    // TODO: properly handle case where piece_index is None 
+                    if index == piece_index.unwrap_or(u32::MAX) && begin == (block_index * (2 << 13)) {
                         let begin_usize: usize = begin.try_into().unwrap();
                         let block_len = min(block.len(), 2 << 13);
                         data_buf.splice(begin_usize..begin_usize + block_len, block);
 
                         if block_index + 1 == self.md.num_blocks() {
-                            // println!(
-                            //     "[{}] Downloaded piece {piece_index}/{}",
-                            //     self.addr,
-                            //     self.md.num_pieces()
-                            // );
                             let data = mem::replace(
                                 &mut data_buf,
                                 vec![0; self.md.info.piece_length.try_into().unwrap()],
                             );
-                            file_builder::write(&self.md, &self.output_dir, piece_index, 0, &data)?;
-                            {
-                                let mut pieces = self.client_pieces.lock().await;
-                                pieces.set(piece_index.try_into().unwrap(), true);
-                                if pieces.all() {
-                                    // println!(
-                                    //     "Thread completed in {} secs!",
-                                    //     start.elapsed().as_secs_f32()
-                                    // );
-                                    return Ok(());
-                                } else {
-                                    piece_index = pieces
-                                        .first_zero()
-                                        .expect("Error: client_pieces bitfield is not all-ones, yet has no zeroes.")
-                                        .try_into()
-                                        .unwrap();
-                                    block_index = 0;
-                                    pieces.set(piece_index.try_into().unwrap(), true);
-                                }
-                            }
+                            file_builder::write(&self.md, &self.output_dir, index, 0, &data)?;
+
+                            // Request piece from peer manager - if no valid ones, we are no longer interested in peer.
+                            // TODO: inform PM that we acquired a piece.
+                            piece_index = self.get_piece_index().await;
+                            self.peer_state.client_interested = piece_index.is_some();
+
+                            block_index = 0;
                         } else {
                             block_index += 1;
                         }
-                        if !peer_state.client_choked {
-                            conn.request_block(&self.md, piece_index, block_index)
-                                .await?;
+
+                        // Request next block
+                        if !peer_state.client_choked && peer_state.peer_interested {
+                            if let Some(index) = piece_index {
+                                conn.request_block(&self.md, index, block_index)
+                                    .await?;
+                            }
                         } else {
                             conn.send_interested().await?;
                         }
                     } else {
-                        // println!("Received wrong block");
+                        // Received wrong block
                     }
                 }
                 Message::Choke(_) => {
@@ -210,8 +210,9 @@ impl WireProtocolTask {
                         conn.send_interested().await?;
                         peer_state.client_interested = true;
                     }
-                    conn.request_block(&self.md, piece_index, block_index)
-                        .await?;
+                    if let Some(index) = piece_index {
+                        conn.request_block(&self.md, index, block_index).await?;
+                    }
                 }
                 Message::Interested(_) => {
                     peer_state.peer_interested = true;
@@ -220,6 +221,24 @@ impl WireProtocolTask {
                 Message::NotInterested(_) => peer_state.peer_interested = false,
                 _ => continue,
             }
+        }
+    }
+
+    async fn get_piece_index(&self) -> Option<u32> {
+        let (tx, rx) = oneshot::channel();
+        let r = self.tx_piece_index_req.send(PieceIndexRequest{chan: tx, peer_bitfield: self.peer_pieces.clone()}).await;
+
+        match rx.await {
+            Ok(v) => {
+                if let Some(x) = v {
+                    // println!("Received piece index {}, ", x);
+                }
+                return v
+            },
+            Err(e) => {
+                println!("Client received error");
+                return None
+            },
         }
     }
 }
