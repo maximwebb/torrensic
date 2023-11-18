@@ -35,8 +35,8 @@ use super::{
 pub(crate) struct Controller {
     pub(crate) md: Arc<Metadata>,
     pub(crate) rx_progress: watch::Receiver<(u32, u32)>,
-    pub(crate) rx_downloaded_pieces: watch::Receiver<BitVec<u8, Msb0>>,
     pub(crate) rx_in_progress_pieces: watch::Receiver<BitVec<u8, Msb0>>,
+    pub(crate) rx_downloaded_pieces: watch::Receiver<BitVec<u8, Msb0>>,
     pub(crate) rx_speed: watch::Receiver<f32>,
     selected_torrent: u16,
     panel_state: PanelState,
@@ -46,15 +46,15 @@ impl Controller {
     pub(crate) fn new(
         md: Arc<Metadata>,
         rx_progress: watch::Receiver<(u32, u32)>,
-        rx_downloaded_pieces: watch::Receiver<BitVec<u8, Msb0>>,
         rx_in_progress_pieces: watch::Receiver<BitVec<u8, Msb0>>,
+        rx_downloaded_pieces: watch::Receiver<BitVec<u8, Msb0>>,
         rx_speed: watch::Receiver<f32>,
     ) -> Self {
         Controller {
             md,
             rx_progress,
-            rx_downloaded_pieces,
             rx_in_progress_pieces,
+            rx_downloaded_pieces,
             rx_speed,
             selected_torrent: 0,
             panel_state: PanelState::Hidden,

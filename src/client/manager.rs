@@ -98,11 +98,9 @@ impl Manager {
                     let req = piece_index_req.expect("Error receiving peer piece request");
 
                     {
-                        // let downloaded_pieces = self.client_pieces.lock().await;
                         let res = Self::respond_piece_index_req(req, &in_progress_pieces, &downloaded_pieces);
 
                         if let Some(index) = res {
-                            println!("Requesting {index}");
                             in_progress_pieces.set(index.try_into().unwrap(), true);
                         }
                     }
@@ -112,7 +110,6 @@ impl Manager {
 
                     in_progress_pieces.set(index.try_into().unwrap(), false);
                     downloaded_pieces.set(index.try_into().unwrap(), true);
-                    println!("Acquired {index}")
                 }
                 peer_disconnect = self.rx_peer_disconnect.recv() => {
                     let payload = peer_disconnect.expect("Error: Peer disconnected too quickly");
@@ -124,6 +121,9 @@ impl Manager {
                         downloaded_pieces.len().try_into().unwrap(),
                     ));
 
+                    let tmp_progress = in_progress_pieces.to_string();
+                    let tmp_download = downloaded_pieces.to_string();
+
                     let _ = self.tx_in_progress_pieces.send(in_progress_pieces.clone());
                     let _ = self.tx_downloaded_pieces.send(downloaded_pieces.clone());
 
@@ -132,8 +132,6 @@ impl Manager {
                     let _ = self.tx_speed.send(speed);
                 }
                 _ = download_speed_interval.tick() => {
-                    // TODO: Again, switch from in progress to downloaded.
-                    // let pieces = self.client_pieces.lock().await;
                     self.download_history.push(downloaded_pieces.count_ones().try_into().unwrap());
                 }
             }
@@ -141,7 +139,6 @@ impl Manager {
     }
 
 
-    // TODO add downloaded_pieces bitfield back
     fn respond_piece_index_req(
         req: PieceIndexRequest,
         in_progress: &BitVec<u8, Msb0>,
