@@ -22,14 +22,6 @@ use crate::parser::metadata::Metadata;
 
 use connection::Connection;
 
-/* OVERVIEW TODO:
-    [x] PM should respond to piece index requests
-    [ ] PM should keep track of how many peers are holding a given piece, and return the least common one
-    [ ] Peer piece information should be left out of PeerHandler (i.e. send PM updates about what pieces the peers have, PM stores this data)
-    [ ] PM should track which pieces are being acquired, and which have already been acquired (no need for shared state)
-    [x] Client should inform PM when it finishes downloading a piece
-*/
-
 pub struct PeerHandler {
     peer_state: PeerState,
     md: Arc<Metadata>,

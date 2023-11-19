@@ -19,11 +19,8 @@ use super::{
 pub(crate) type BitVecMutex = Arc<Mutex<BitVec<u8, Msb0>>>;
 
 /* TODO for next time:
-    - The in-progress stats seem to be messing with the downloaded ones
-    - The UI might be overlaying - though is unlikely, as downloaded: x/y is also wrong
-    - Test if pieces are actually being downloaded - might be a bug in peer handler?
-    - Inspect downloaded_pieces and in_progress_pieces as vectors.
-
+    - Combine peer handler / manager comms into one channel
+    - Start looking at magnet links
 */
 pub(crate) struct Manager {
     md: Arc<Metadata>,
@@ -118,8 +115,6 @@ impl Manager {
 
                     let res = piece_strategy.get_piece_index(req.addr, self.endgame_mode);
 
-                    // println!("Requesting {}", res.unwrap_or(6969));
-
                     let _ = req.chan.send(res);
                 }
                 piece_download = self.rx_piece_download.recv() => {
@@ -135,14 +130,11 @@ impl Manager {
                     // Test if all pieces have been downloaded or are in-progress:
                     if !self.endgame_mode {
                         self.endgame_mode = prog.iter().zip(down.iter()).all(|(&a, &b)| a || b);
-                        if self.endgame_mode {
-                            println!("Endgame mode enabled");
-                        }
                     }
                 }
+                // TODO: update piece strategy when peer disconnects
                 peer_disconnect = self.rx_peer_disconnect.recv() => {
                     let payload = peer_disconnect.expect("Error: Peer disconnected too quickly");
-                    println!("Peer disconnected (addr: {})", payload.addr);
                 }
                 _ = ui_refresh_interval.tick() => {
                     let _ = self.tx_progress_bar.send((
@@ -163,28 +155,6 @@ impl Manager {
             }
         }
     }
-
-    // fn respond_piece_index_req(
-    //     req: PieceIndexRequest,
-    //     in_progress: &BitVec<u8, Msb0>,
-    //     downloaded: &BitVec<u8, Msb0>,
-    // ) -> Option<u32> {
-    //     {
-    //         let (chan, peer_bitfield) = (req.chan, req.peer_bitfield);
-
-    //         let valid_pieces = !(!peer_bitfield | in_progress | downloaded);
-    //         let res = valid_pieces.first_one().map(|v| v as u32);
-
-    //         match chan.send(res) {
-    //             Ok(_) => {}
-    //             Err(_v) => {
-    //                 println!("PM send error");
-    //             }
-    //         }
-
-    //         return res;
-    //     }
-    // }
 
     // TODO: move this to utils
     fn count_ones(v: &Vec<bool>) -> u32 {

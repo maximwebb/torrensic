@@ -8,7 +8,6 @@ pub(crate) struct PieceStrategy {
     piece_multiplicities: Vec<u32>,
     in_progress: Arc<Mutex<Vec<bool>>>,
     downloaded: Arc<Mutex<Vec<bool>>>,
-    endgame_mode: bool
 }
 
 impl PieceStrategy {
@@ -23,7 +22,6 @@ impl PieceStrategy {
             piece_multiplicities: vec![0; num_pieces],
             in_progress,
             downloaded,
-            endgame_mode: false,
         };
     }
 
@@ -46,17 +44,17 @@ impl PieceStrategy {
     }
 
     /*
-        Find the piece index satisfying the following criteria, if it exists:
-        - Owned by the relevant peer
-        - Not already downloaded
-        - If not in endgame mode, not currently in progress
-        - Owned by the fewest number of other peers
-     */
+       Find the piece index satisfying the following criteria, if it exists:
+       - Owned by the relevant peer
+       - Not already downloaded
+       - If not in endgame mode, not currently in progress
+       - Owned by the fewest number of other peers
+    */
     pub fn get_piece_index(&mut self, addr: Arc<str>, endgame_mode: bool) -> Option<u32> {
-
         let peer_bitfield = self
             .peer_bitfield_map
-            .get(&*addr).expect("Invalid peer address");
+            .get(&*addr)
+            .expect("Invalid peer address");
 
         let mut in_progress = self.in_progress.try_lock().expect("Error acquiring mutex");
         let downloaded = self.downloaded.try_lock().expect("Error acquiring mutex");
@@ -88,21 +86,23 @@ impl PieceStrategy {
 
         if let Some((i, _)) = res {
             in_progress[i] = true;
-            return Some(i.try_into().unwrap())
-        }
-        else {
-            return None
+            return Some(i.try_into().unwrap());
+        } else {
+            return None;
         }
     }
 
     // TODO: check this function
     fn update_multiplicities(&mut self) {
-        self.piece_multiplicities = self.peer_bitfield_map.values().fold(vec![0; self.num_pieces], |acc, v| {
-            return acc
-                .iter()
-                .zip(v.iter())
-                .map(|(a, b)| a + if *b { 1 } else { 0 })
-                .collect();
-        })
+        self.piece_multiplicities =
+            self.peer_bitfield_map
+                .values()
+                .fold(vec![0; self.num_pieces], |acc, v| {
+                    return acc
+                        .iter()
+                        .zip(v.iter())
+                        .map(|(a, b)| a + if *b { 1 } else { 0 })
+                        .collect();
+                })
     }
 }

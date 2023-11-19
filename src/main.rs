@@ -5,7 +5,6 @@ mod ui;
 
 use std::sync::Arc;
 
-use bitvec::{prelude::Msb0, vec::BitVec};
 use builder::file_builder;
 use client::manager::run_peer_manager_task;
 use tokio::{self, sync::watch};
@@ -34,7 +33,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // println!("Found {} peers.", { tracker_info.peers.len() });
 
     let (tx_progress, rx_progress) = watch::channel((0, 0));
-    let (tx_in_progress_pieces, rx_in_progress_pieces) = watch::channel(vec![false; md.num_pieces()]);
+    let (tx_in_progress_pieces, rx_in_progress_pieces) =
+        watch::channel(vec![false; md.num_pieces()]);
     let (tx_downloaded_pieces, rx_downloaded_pieces) = watch::channel(vec![false; md.num_pieces()]);
     let (tx_speed, rx_speed) = watch::channel(0.0);
     let md = Arc::new(md);
@@ -48,7 +48,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tx_downloaded_pieces,
         tx_speed,
     )?;
-    let ui_controller = Controller::new(md.clone(), rx_progress, rx_in_progress_pieces, rx_downloaded_pieces, rx_speed);
+    let ui_controller = Controller::new(
+        md.clone(),
+        rx_progress,
+        rx_in_progress_pieces,
+        rx_downloaded_pieces,
+        rx_speed,
+    );
 
     tokio::spawn(run_peer_manager_task(peer_manager));
     run_controller_task(ui_controller).await;

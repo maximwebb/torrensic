@@ -1,4 +1,3 @@
-use bitvec::{prelude::Msb0, vec::BitVec};
 use ratatui::{
     prelude::{Backend, Constraint, Layout, Rect},
     style::Color,
@@ -31,7 +30,8 @@ impl Draw for PiecesInfo {
 
         let text = Paragraph::new(format!(
             "Downloaded {}/{} pieces.",
-            TryInto::<usize>::try_into(self.downloaded_pieces.iter().filter(|&&x| x).count()).unwrap(),
+            TryInto::<usize>::try_into(self.downloaded_pieces.iter().filter(|&&x| x).count())
+                .unwrap(),
             self.downloaded_pieces.len()
         ));
 
@@ -53,8 +53,7 @@ impl Shape for PiecesInfo {
                 Color::LightGreen
             } else if self.in_progress_pieces[i] {
                 Color::Yellow
-            }
-            else {
+            } else {
                 Color::LightRed
             };
             let (x, y) = (i % (self.width as usize), i / (self.width as usize));
@@ -64,7 +63,10 @@ impl Shape for PiecesInfo {
 }
 
 impl PiecesInfo {
-    pub(crate) fn new(rx_in_progress_pieces: watch::Receiver<Vec<bool>>, rx_downloaded_pieces: watch::Receiver<Vec<bool>>) -> Self {
+    pub(crate) fn new(
+        rx_in_progress_pieces: watch::Receiver<Vec<bool>>,
+        rx_downloaded_pieces: watch::Receiver<Vec<bool>>,
+    ) -> Self {
         let in_progress_pieces = rx_in_progress_pieces.borrow().to_owned();
         let downloaded_pieces = rx_downloaded_pieces.borrow().to_owned();
         PiecesInfo {
