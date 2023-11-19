@@ -14,10 +14,10 @@ use tokio::sync::watch;
 use crate::ui::Draw;
 
 pub(crate) struct PiecesInfo {
-    pub(crate) rx_in_progress_pieces: watch::Receiver<BitVec<u8, Msb0>>,
-    pub(crate) rx_downloaded_pieces: watch::Receiver<BitVec<u8, Msb0>>,
-    in_progress_pieces: BitVec<u8, Msb0>,
-    downloaded_pieces: BitVec<u8, Msb0>,
+    pub(crate) rx_in_progress_pieces: watch::Receiver<Vec<bool>>,
+    pub(crate) rx_downloaded_pieces: watch::Receiver<Vec<bool>>,
+    in_progress_pieces: Vec<bool>,
+    downloaded_pieces: Vec<bool>,
     width: u16,
 }
 
@@ -31,7 +31,7 @@ impl Draw for PiecesInfo {
 
         let text = Paragraph::new(format!(
             "Downloaded {}/{} pieces.",
-            self.downloaded_pieces.count_ones(),
+            TryInto::<usize>::try_into(self.downloaded_pieces.iter().filter(|&&x| x).count()).unwrap(),
             self.downloaded_pieces.len()
         ));
 
@@ -64,7 +64,7 @@ impl Shape for PiecesInfo {
 }
 
 impl PiecesInfo {
-    pub(crate) fn new(rx_in_progress_pieces: watch::Receiver<BitVec<u8, Msb0>>, rx_downloaded_pieces: watch::Receiver<BitVec<u8, Msb0>>) -> Self {
+    pub(crate) fn new(rx_in_progress_pieces: watch::Receiver<Vec<bool>>, rx_downloaded_pieces: watch::Receiver<Vec<bool>>) -> Self {
         let in_progress_pieces = rx_in_progress_pieces.borrow().to_owned();
         let downloaded_pieces = rx_downloaded_pieces.borrow().to_owned();
         PiecesInfo {

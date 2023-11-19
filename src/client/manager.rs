@@ -11,8 +11,10 @@ use crate::{
     parser::{metadata::Metadata, trackerinfo::PeerInfo},
 };
 
-use super::peer_handler::{PieceIndexRequest, PeerDisconnect, PeerHandler, PieceDownload};
-
+use super::{
+    peer_handler::{PeerBitfield, PeerDisconnect, PeerHandler, PieceDownload, PieceIndexRequest},
+    piece_strategy::PieceStrategy,
+};
 
 pub(crate) type BitVecMutex = Arc<Mutex<BitVec<u8, Msb0>>>;
 
@@ -26,11 +28,13 @@ pub(crate) type BitVecMutex = Arc<Mutex<BitVec<u8, Msb0>>>;
 pub(crate) struct Manager {
     md: Arc<Metadata>,
     download_history: RingBuffer,
+    endgame_mode: bool,
     // TODO: distinguish UI from peer handler channels
-    tx_progress: watch::Sender<(u32, u32)>,
-    tx_in_progress_pieces: watch::Sender<BitVec<u8, Msb0>>,
-    tx_downloaded_pieces: watch::Sender<BitVec<u8, Msb0>>,
+    tx_progress_bar: watch::Sender<(u32, u32)>,
+    tx_in_progress: watch::Sender<Vec<bool>>,
+    tx_downloaded: watch::Sender<Vec<bool>>,
     tx_speed: watch::Sender<f32>,
+    rx_peer_bitfield: mpsc::Receiver<PeerBitfield>,
     rx_piece_index_req: mpsc::Receiver<PieceIndexRequest>,
     rx_piece_download: mpsc::Receiver<PieceDownload>,
     rx_peer_disconnect: mpsc::Receiver<PeerDisconnect>,
@@ -42,9 +46,9 @@ impl Manager {
         md: Arc<Metadata>,
         peers: Vec<PeerInfo>,
         output_dir: &str,
-        tx_progress: watch::Sender<(u32, u32)>,
-        tx_in_progress_pieces: watch::Sender<BitVec<u8, Msb0>>,
-        tx_downloaded_pieces: watch::Sender<BitVec<u8, Msb0>>,
+        tx_progress_bar: watch::Sender<(u32, u32)>,
+        tx_in_progress: watch::Sender<Vec<bool>>,
+        tx_downloaded: watch::Sender<Vec<bool>>,
         tx_speed: watch::Sender<f32>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         // TODO: do these need to be shared with peer handlers?
@@ -52,7 +56,8 @@ impl Manager {
         let client_pieces_ref = Arc::new(Mutex::new(client_pieces));
 
         // Peer handler channels
-        let (tx_piece_index_req, rx_piece_index_req) = mpsc::channel(8);
+        let (tx_peer_bitfield, rx_peer_bitfield) = mpsc::channel(32);
+        let (tx_piece_index_req, rx_piece_index_req) = mpsc::channel(128);
         let (tx_piece_download, rx_piece_download) = mpsc::channel(8);
         let (tx_peer_disconnect, rx_peer_disconnect) = mpsc::channel(8);
 
@@ -64,21 +69,22 @@ impl Manager {
                 &peer.to_string(),
                 dir_ref.clone(),
                 client_pieces_ref.clone(),
+                tx_peer_bitfield.clone(),
                 tx_piece_index_req.clone(),
                 tx_piece_download.clone(),
                 tx_peer_disconnect.clone(),
             )
         }
 
-        let download_history = RingBuffer::new(15);
-
         Ok(Manager {
             md,
-            download_history,
-            tx_progress,
-            tx_in_progress_pieces,
-            tx_downloaded_pieces,
+            download_history: RingBuffer::new(15),
+            endgame_mode: false,
+            tx_progress_bar,
+            tx_in_progress,
+            tx_downloaded,
             tx_speed,
+            rx_peer_bitfield,
             rx_piece_index_req,
             rx_piece_download,
             rx_peer_disconnect,
@@ -89,76 +95,100 @@ impl Manager {
         let mut ui_refresh_interval = time::interval(Duration::from_millis(60));
         let mut download_speed_interval = time::interval(Duration::from_millis(100));
 
-        let mut in_progress_pieces = BitVec::<u8, Msb0>::repeat(false, self.md.num_pieces());
-        let mut downloaded_pieces = BitVec::<u8, Msb0>::repeat(false, self.md.num_pieces());
+        let in_progress = Arc::new(Mutex::new(vec![false; self.md.num_pieces()]));
+        let downloaded = Arc::new(Mutex::new(vec![false; self.md.num_pieces()]));
+
+        let mut piece_strategy = PieceStrategy::new(
+            self.md.num_pieces(),
+            Arc::clone(&in_progress),
+            Arc::clone(&downloaded),
+        );
 
         loop {
             tokio::select! {
+                peer_bitfield = self.rx_peer_bitfield.recv() => {
+                    let req = peer_bitfield.expect("Error receiving peer bitfield");
+
+                    let _ = piece_strategy.update_bitfield(req.addr, req.peer_bitfield);
+
+                    let _ = req.ack.send(());
+                }
                 piece_index_req = self.rx_piece_index_req.recv() => {
                     let req = piece_index_req.expect("Error receiving peer piece request");
 
-                    {
-                        let res = Self::respond_piece_index_req(req, &in_progress_pieces, &downloaded_pieces);
+                    let res = piece_strategy.get_piece_index(req.addr, self.endgame_mode);
 
-                        if let Some(index) = res {
-                            in_progress_pieces.set(index.try_into().unwrap(), true);
-                        }
-                    }
+                    // println!("Requesting {}", res.unwrap_or(6969));
+
+                    let _ = req.chan.send(res);
                 }
                 piece_download = self.rx_piece_download.recv() => {
                     let index = piece_download.expect("Error receiving piece download update").index;
+                    let index: usize = index.try_into().unwrap();
 
-                    in_progress_pieces.set(index.try_into().unwrap(), false);
-                    downloaded_pieces.set(index.try_into().unwrap(), true);
+                    let mut prog = in_progress.lock().await;
+                    let mut down = downloaded.lock().await;
+
+                    prog[index] = false;
+                    down[index] = true;
+
+                    // Test if all pieces have been downloaded or are in-progress:
+                    if !self.endgame_mode {
+                        self.endgame_mode = prog.iter().zip(down.iter()).all(|(&a, &b)| a || b);
+                        if self.endgame_mode {
+                            println!("Endgame mode enabled");
+                        }
+                    }
                 }
                 peer_disconnect = self.rx_peer_disconnect.recv() => {
                     let payload = peer_disconnect.expect("Error: Peer disconnected too quickly");
                     println!("Peer disconnected (addr: {})", payload.addr);
                 }
                 _ = ui_refresh_interval.tick() => {
-                    let _ = self.tx_progress.send((
-                        downloaded_pieces.count_ones().try_into().unwrap(),
-                        downloaded_pieces.len().try_into().unwrap(),
+                    let _ = self.tx_progress_bar.send((
+                        Self::count_ones(&downloaded.lock().await.to_vec()),
+                        self.md.num_pieces().try_into().unwrap(),
                     ));
 
-                    let tmp_progress = in_progress_pieces.to_string();
-                    let tmp_download = downloaded_pieces.to_string();
-
-                    let _ = self.tx_in_progress_pieces.send(in_progress_pieces.clone());
-                    let _ = self.tx_downloaded_pieces.send(downloaded_pieces.clone());
+                    let _ = self.tx_in_progress.send(in_progress.lock().await.clone());
+                    let _ = self.tx_downloaded.send(downloaded.lock().await.clone());
 
                     let speed = (self.download_history.average() / 0.1) * (self.md.info.piece_length as f32 / 1_000.0);
 
                     let _ = self.tx_speed.send(speed);
                 }
                 _ = download_speed_interval.tick() => {
-                    self.download_history.push(downloaded_pieces.count_ones().try_into().unwrap());
+                    self.download_history.push(Self::count_ones(&downloaded.lock().await.to_vec()));
                 }
             }
         }
     }
 
+    // fn respond_piece_index_req(
+    //     req: PieceIndexRequest,
+    //     in_progress: &BitVec<u8, Msb0>,
+    //     downloaded: &BitVec<u8, Msb0>,
+    // ) -> Option<u32> {
+    //     {
+    //         let (chan, peer_bitfield) = (req.chan, req.peer_bitfield);
 
-    fn respond_piece_index_req(
-        req: PieceIndexRequest,
-        in_progress: &BitVec<u8, Msb0>,
-        downloaded: &BitVec<u8, Msb0>,
-    ) -> Option<u32> {
-        {
-            let (chan, peer_bitfield) = (req.chan, req.peer_bitfield);
+    //         let valid_pieces = !(!peer_bitfield | in_progress | downloaded);
+    //         let res = valid_pieces.first_one().map(|v| v as u32);
 
-            let valid_pieces = ! (!peer_bitfield | in_progress | downloaded);
-            let res = valid_pieces.first_one().map(|v| v as u32);
+    //         match chan.send(res) {
+    //             Ok(_) => {}
+    //             Err(_v) => {
+    //                 println!("PM send error");
+    //             }
+    //         }
 
-            match chan.send(res) {
-                Ok(_) => {}
-                Err(_v) => {
-                    println!("PM send error");
-                }
-            }
-            
-            return res;
-        }
+    //         return res;
+    //     }
+    // }
+
+    // TODO: move this to utils
+    fn count_ones(v: &Vec<bool>) -> u32 {
+        return v.iter().filter(|&&x| x).count().try_into().unwrap();
     }
 }
 

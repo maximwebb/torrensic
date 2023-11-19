@@ -11,7 +11,6 @@ use bitvec::prelude::*;
 use tokio::sync::mpsc::{self};
 use tokio::sync::oneshot;
 
-
 use message::bitfield::Bitfield;
 use message::have::Have;
 use message::piece::Piece;
@@ -23,7 +22,6 @@ use crate::parser::metadata::Metadata;
 
 use connection::Connection;
 
-
 /* OVERVIEW TODO:
     [x] PM should respond to piece index requests
     [ ] PM should keep track of how many peers are holding a given piece, and return the least common one
@@ -34,11 +32,11 @@ use connection::Connection;
 
 pub struct PeerHandler {
     peer_state: PeerState,
-    peer_pieces: BitVec<u8, Msb0>, // TODO: store this in peer manager
     md: Arc<Metadata>,
     addr: Arc<str>,
     output_dir: Arc<str>,
     client_pieces: BitVecMutex,
+    tx_peer_bitfield: mpsc::Sender<PeerBitfield>,
     tx_piece_index_req: mpsc::Sender<PieceIndexRequest>,
     tx_piece_download: mpsc::Sender<PieceDownload>,
     tx_peer_disconnect: mpsc::Sender<PeerDisconnect>,
@@ -50,6 +48,7 @@ impl PeerHandler {
         addr: &str,
         output_dir: Arc<str>,
         client_pieces: BitVecMutex,
+        tx_peer_bitfield: mpsc::Sender<PeerBitfield>,
         tx_piece_index_req: mpsc::Sender<PieceIndexRequest>,
         tx_piece_download: mpsc::Sender<PieceDownload>,
         tx_peer_disconnect: mpsc::Sender<PeerDisconnect>,
@@ -61,11 +60,11 @@ impl PeerHandler {
                 peer_choked: true,
                 peer_interested: false,
             },
-            peer_pieces: BitVec::<u8, Msb0>::repeat(false, md.num_pieces()),
             md,
             addr: addr.into(),
             output_dir,
             client_pieces,
+            tx_peer_bitfield,
             tx_piece_index_req,
             tx_piece_download,
             tx_peer_disconnect,
@@ -75,7 +74,6 @@ impl PeerHandler {
     }
 
     pub(crate) async fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-
         let (tx_cancel, mut rx_cancel) = mpsc::channel::<()>(1);
 
         let mut conn = Connection::new(&self.addr, &self.md, tx_cancel).await?;
@@ -86,7 +84,6 @@ impl PeerHandler {
             peer_choked: true,
             peer_interested: false,
         };
-
 
         let mut block_index: u32 = 0;
         let mut piece_index = None;
@@ -105,7 +102,6 @@ impl PeerHandler {
         let mut data_buf = vec![0; self.md.info.piece_length.try_into().unwrap()];
 
         loop {
-
             let msg = tokio::select! {
                 v = conn.pop() => {
                     match v {
@@ -138,26 +134,30 @@ impl PeerHandler {
                 Message::Cancel(_) => return Ok(()),
 
                 Message::Bitfield(Bitfield { bitfield: raw }) => {
-                    self.peer_pieces = BitVec::<_, Msb0>::from_vec(
-                        raw[0..(self.md.num_pieces() + 7) / 8].to_vec(),
-                    );
+                    let mut peer_pieces: Vec<bool> = raw
+                        .iter()
+                        .flat_map(|&byte| (0..8).rev().map(move |bit| (byte >> bit) & 1 == 1))
+                        .collect();
+
+                    peer_pieces.truncate(self.md.num_pieces());
+
+                    self.send_bitfield_update(peer_pieces).await;
 
                     // Request piece index from peer manager
                     piece_index = self.get_piece_index().await;
                     self.peer_state.client_interested = piece_index.is_some();
 
                     if let Some(index) = piece_index {
-
                         if !peer_state.client_choked {
-                            conn.request_block(&self.md, index, block_index)
-                                .await?;
+                            conn.request_block(&self.md, index, block_index).await?;
                         } else {
                             conn.send_interested().await?;
                         }
                     }
                 }
                 Message::Have(Have { piece_index: index }) => {
-                    self.peer_pieces.set(index.try_into().unwrap(), true);
+                    self.send_have_update(index).await;
+
                     if piece_index.is_none() {
                         piece_index = self.get_piece_index().await;
                     }
@@ -167,8 +167,10 @@ impl PeerHandler {
                     begin,
                     block,
                 }) => {
-                    // TODO: properly handle case where piece_index is None 
-                    if index == piece_index.unwrap_or(u32::MAX) && begin == (block_index * (2 << 13)) {
+                    // TODO: properly handle case where piece_index is None
+                    if index == piece_index.unwrap_or(u32::MAX)
+                        && begin == (block_index * (2 << 13))
+                    {
                         let begin_usize: usize = begin.try_into().unwrap();
                         let block_len = min(block.len(), 2 << 13);
                         data_buf.splice(begin_usize..begin_usize + block_len, block);
@@ -193,8 +195,7 @@ impl PeerHandler {
                         // Request next block
                         if !peer_state.client_choked && peer_state.peer_interested {
                             if let Some(index) = piece_index {
-                                conn.request_block(&self.md, index, block_index)
-                                    .await?;
+                                conn.request_block(&self.md, index, block_index).await?;
                             }
                         } else {
                             conn.send_interested().await?;
@@ -230,25 +231,51 @@ impl PeerHandler {
         }
     }
 
+    async fn send_bitfield_update(&self, bitfield: Vec<bool>) {
+        let (tx, rx) = oneshot::channel();
+
+        let res = self
+            .tx_peer_bitfield
+            .send(PeerBitfield {
+                ack: tx,
+                addr: self.addr.clone(),
+                peer_bitfield: bitfield,
+            })
+            .await;
+
+        // Wait for manager response before returning
+        rx.await.unwrap();
+    }
+
+    async fn send_have_update(&self, index: u32) {
+        let mut new_pieces = vec![false; self.md.num_pieces()];
+        new_pieces[TryInto::<usize>::try_into(index).unwrap()] = true;
+
+        self.send_bitfield_update(new_pieces).await;
+    }
+
     async fn get_piece_index(&self) -> Option<u32> {
         let (tx, rx) = oneshot::channel();
-        let _ = self.tx_piece_index_req.send(PieceIndexRequest{chan: tx, peer_bitfield: self.peer_pieces.clone()}).await;
+        let _ = self
+            .tx_piece_index_req
+            .send(PieceIndexRequest {
+                chan: tx,
+                addr: self.addr.clone(),
+            })
+            .await;
 
         match rx.await {
-            Ok(v) => {
-                return v
-            },
+            Ok(v) => return v,
             Err(_) => {
                 println!("Client received error");
-                return None
-            },
+                return None;
+            }
         }
     }
 
     async fn start(mut proto_task: PeerHandler) {
         let _ = proto_task.run().await;
     }
-    
 }
 
 fn bitvec_to_bytes(bits: &BitVec<u8, Msb0>) -> Vec<u8> {
@@ -263,13 +290,19 @@ fn bitvec_to_bytes(bits: &BitVec<u8, Msb0>) -> Vec<u8> {
     res
 }
 
+pub(crate) struct PeerBitfield {
+    pub ack: oneshot::Sender<()>,
+    pub addr: Arc<str>,
+    pub peer_bitfield: Vec<bool>,
+}
+
 pub(crate) struct PieceIndexRequest {
     pub chan: oneshot::Sender<Option<u32>>,
-    pub peer_bitfield: BitVec<u8, Msb0>,
+    pub addr: Arc<str>,
 }
 
 pub(crate) struct PieceDownload {
-    pub index: u32
+    pub index: u32,
 }
 
 pub(crate) struct PeerDisconnect {
