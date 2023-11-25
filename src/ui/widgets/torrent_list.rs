@@ -59,7 +59,7 @@ impl TorrentList {
     }
 
     pub(crate) fn set_torrent(&mut self, torrent_num: u16) {
-        let torrent_num = torrent_num.into();
+        let torrent_num = torrent_num as usize;
         for (i, torrent) in self.torrents.iter_mut().enumerate() {
             torrent.set_selected(i == torrent_num);
         }

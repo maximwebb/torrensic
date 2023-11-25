@@ -2,6 +2,8 @@ use std::{collections::HashMap, sync::Arc};
 
 use tokio::sync::Mutex;
 
+use core::cmp::PartialEq;
+
 pub(crate) struct PieceStrategy {
     peer_bitfield_map: HashMap<String, Vec<bool>>,
     num_pieces: usize,
@@ -26,7 +28,7 @@ impl PieceStrategy {
     }
 
     pub fn update_bitfield(&mut self, addr: Arc<str>, bitfield: Vec<bool>) -> Result<(), ()> {
-        if bitfield.len() != self.num_pieces.try_into().unwrap() {
+        if bitfield.len() != self.num_pieces {
             return Err(());
         }
 
@@ -51,6 +53,7 @@ impl PieceStrategy {
        - Owned by the fewest number of other peers
     */
     pub fn get_piece_index(&mut self, addr: Arc<str>, endgame_mode: bool) -> Option<u32> {
+        // return None;
         let peer_bitfield = self
             .peer_bitfield_map
             .get(&*addr)

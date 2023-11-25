@@ -134,7 +134,7 @@ impl Manager {
                 }
                 // TODO: update piece strategy when peer disconnects
                 peer_disconnect = self.rx_peer_disconnect.recv() => {
-                    let payload = peer_disconnect.expect("Error: Peer disconnected too quickly");
+                    let _payload = peer_disconnect.expect("Error: Peer disconnected too quickly");
                 }
                 _ = ui_refresh_interval.tick() => {
                     let _ = self.tx_progress_bar.send((

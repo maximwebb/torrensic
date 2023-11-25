@@ -16,6 +16,17 @@ use crate::{
     ui::controller::{run_controller_task, Controller},
 };
 
+
+/*
+    TODO FOR NEXT TIME: 
+    - Test the (hitherto untested) code in data.rs
+
+    - Look into passing by reference instead of copying for widgets
+    - Unify messages between manager and peer handlers under one type
+    - Pattern match according to which message was sent
+    - Look into splitting UI data publishing code out of manager
+
+*/
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let torrent_file = String::from("torrents/airfryer.torrent");
@@ -41,7 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let peer_manager = Manager::new(
         md.clone(),
-        tracker_info.peers,
+        tracker_info.peers.clone(), // TODO: make tracker_info type Arc
         &output_dir,
         tx_progress,
         tx_in_progress_pieces,
@@ -50,11 +61,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let ui_controller = Controller::new(
         md.clone(),
+        tracker_info.peers.clone(),
         rx_progress,
         rx_in_progress_pieces,
         rx_downloaded_pieces,
         rx_speed,
-    );
+    ).await;
 
     tokio::spawn(run_peer_manager_task(peer_manager));
     run_controller_task(ui_controller).await;

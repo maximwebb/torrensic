@@ -26,7 +26,7 @@ impl Draw for PanelTabs {
             .border_type(BorderType::Thick);
         let border = if self.selected { border } else { border.dim() };
 
-        let titles = [" Torrent Info ", " Pieces "]
+        let titles = [" Torrent Info ", " Pieces ", " Map "]
             .iter()
             .cloned()
             .map(Line::from)

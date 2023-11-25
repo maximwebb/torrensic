@@ -1,4 +1,3 @@
-use bitvec::{prelude::Msb0, vec::BitVec};
 use crossterm::{
     self,
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
@@ -11,7 +10,7 @@ use std::{
     error::Error,
     io,
     sync::Arc,
-    time::Duration,
+    time::Duration, collections::HashMap,
 };
 use tokio::sync::watch;
 
@@ -21,13 +20,14 @@ use ratatui::{
     Terminal,
 };
 
-use crate::parser::metadata::Metadata;
+use crate::parser::{metadata::Metadata, trackerinfo::PeerInfo};
 
 use super::{
     components::{title::Title, torrent_progress::TorrentProgress},
+    data::{LatLon, get_ip_locations},
     widgets::{
-        panel_tabs::PanelTabs, pieces_info::PiecesInfo, torrent_info::TorrentInfo,
-        torrent_list::TorrentList,
+        map_info::MapInfo, panel_tabs::PanelTabs, pieces_info::PiecesInfo,
+        torrent_info::TorrentInfo, torrent_list::TorrentList,
     },
     Draw,
 };
@@ -40,16 +40,21 @@ pub(crate) struct Controller {
     pub(crate) rx_speed: watch::Receiver<f32>,
     selected_torrent: u16,
     panel_state: PanelState,
+    ip_location_map: Arc<HashMap<String, Option<LatLon>>>,
 }
 
 impl Controller {
-    pub(crate) fn new(
+    pub(crate) async fn new(
         md: Arc<Metadata>,
+        peers: Vec<PeerInfo>,
         rx_progress: watch::Receiver<(u32, u32)>,
         rx_in_progress_pieces: watch::Receiver<Vec<bool>>,
         rx_downloaded_pieces: watch::Receiver<Vec<bool>>,
         rx_speed: watch::Receiver<f32>,
     ) -> Self {
+        let hosts = peers.iter().map(|peer| peer.ip.to_owned()).collect();
+        let ip_location_map = get_ip_locations(hosts).await.unwrap();
+
         Controller {
             md,
             rx_progress,
@@ -58,6 +63,7 @@ impl Controller {
             rx_speed,
             selected_torrent: 0,
             panel_state: PanelState::Hidden,
+            ip_location_map: ip_location_map.into()
         }
     }
 
@@ -106,6 +112,9 @@ impl Controller {
                     PanelState::PiecesInfo(panel) => {
                         panel.draw(f, tabs_inner_area);
                     }
+                    PanelState::MapInfo(panel) => {
+                        panel.draw(f, tabs_inner_area);
+                    }
                 }
             })?;
 
@@ -139,8 +148,10 @@ impl Controller {
                                 torrent_list.set_selected(true);
                                 panel_tabs.set_selected(false);
                             } else if key.code == KeyCode::Right {
-                                self.panel_state =
-                                    PanelState::PiecesInfo(PiecesInfo::new(self.rx_in_progress_pieces.clone(), self.rx_downloaded_pieces.clone()));
+                                self.panel_state = PanelState::PiecesInfo(PiecesInfo::new(
+                                    self.rx_in_progress_pieces.clone(),
+                                    self.rx_downloaded_pieces.clone(),
+                                ));
                                 panel_tabs.set_tab(1);
                             }
                         }
@@ -154,6 +165,23 @@ impl Controller {
                                     md: self.md.clone(),
                                 });
                                 panel_tabs.set_tab(0);
+                            } else if key.code == KeyCode::Right {
+                                self.panel_state =
+                                    PanelState::MapInfo(MapInfo::new(self.ip_location_map.clone()));
+                                panel_tabs.set_tab(2);
+                            }
+                        }
+                        PanelState::MapInfo(_) => {
+                            if key.code == KeyCode::Esc {
+                                self.panel_state = PanelState::Hidden;
+                                torrent_list.set_selected(true);
+                                panel_tabs.set_selected(false);
+                            } else if key.code == KeyCode::Left {
+                                self.panel_state = PanelState::PiecesInfo(PiecesInfo::new(
+                                    self.rx_in_progress_pieces.clone(),
+                                    self.rx_downloaded_pieces.clone(),
+                                ));
+                                panel_tabs.set_tab(1);
                             }
                         }
                     }
@@ -203,4 +231,5 @@ enum PanelState {
     Hidden,
     TorrentInfo(TorrentInfo),
     PiecesInfo(PiecesInfo),
+    MapInfo(MapInfo),
 }

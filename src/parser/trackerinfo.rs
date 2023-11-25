@@ -110,6 +110,7 @@ impl TrackerInfo {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct PeerInfo {
     pub peer_id: Option<Vec<u8>>,
     pub ip: String,
