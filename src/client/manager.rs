@@ -12,7 +12,8 @@ use crate::{
 };
 
 use super::{
-    peer_handler::{PeerBitfield, PeerDisconnect, PeerHandler, PieceDownload, PieceIndexRequest},
+    admin_message::{AdminMessage, PeerBitfield, PeerDisconnect, PieceDownload, PieceIndexRequest},
+    peer_handler::PeerHandler,
     piece_strategy::PieceStrategy,
 };
 
@@ -31,10 +32,7 @@ pub(crate) struct Manager {
     tx_in_progress: watch::Sender<Vec<bool>>,
     tx_downloaded: watch::Sender<Vec<bool>>,
     tx_speed: watch::Sender<f32>,
-    rx_peer_bitfield: mpsc::Receiver<PeerBitfield>,
-    rx_piece_index_req: mpsc::Receiver<PieceIndexRequest>,
-    rx_piece_download: mpsc::Receiver<PieceDownload>,
-    rx_peer_disconnect: mpsc::Receiver<PeerDisconnect>,
+    rx_admin_message: mpsc::Receiver<AdminMessage>,
 }
 
 impl Manager {
@@ -52,11 +50,8 @@ impl Manager {
         let client_pieces: BitVec<u8, Msb0> = file_builder::load_bitfield(&md, &output_dir)?;
         let client_pieces_ref = Arc::new(Mutex::new(client_pieces));
 
-        // Peer handler channels
-        let (tx_peer_bitfield, rx_peer_bitfield) = mpsc::channel(32);
-        let (tx_piece_index_req, rx_piece_index_req) = mpsc::channel(128);
-        let (tx_piece_download, rx_piece_download) = mpsc::channel(8);
-        let (tx_peer_disconnect, rx_peer_disconnect) = mpsc::channel(8);
+        // Peer handler channel
+        let (tx_admin_message, rx_admin_message) = mpsc::channel(128);
 
         let dir_ref: Arc<str> = Arc::from(output_dir);
 
@@ -66,10 +61,7 @@ impl Manager {
                 &peer.to_string(),
                 dir_ref.clone(),
                 client_pieces_ref.clone(),
-                tx_peer_bitfield.clone(),
-                tx_piece_index_req.clone(),
-                tx_piece_download.clone(),
-                tx_peer_disconnect.clone(),
+                tx_admin_message.clone(),
             )
         }
 
@@ -81,10 +73,7 @@ impl Manager {
             tx_in_progress,
             tx_downloaded,
             tx_speed,
-            rx_peer_bitfield,
-            rx_piece_index_req,
-            rx_piece_download,
-            rx_peer_disconnect,
+            rx_admin_message,
         })
     }
 
@@ -103,38 +92,37 @@ impl Manager {
 
         loop {
             tokio::select! {
-                peer_bitfield = self.rx_peer_bitfield.recv() => {
-                    let req = peer_bitfield.expect("Error receiving peer bitfield");
+                admin_message = self.rx_admin_message.recv() => {
+                    let admin_message = admin_message.expect("Error receiving message");
+                    match admin_message {
+                        AdminMessage::PeerBitfield(req) => {
+                            let _ = piece_strategy.update_bitfield(req.addr, req.peer_bitfield);
 
-                    let _ = piece_strategy.update_bitfield(req.addr, req.peer_bitfield);
+                            let _ = req.ack.send(());
+                        },
+                        AdminMessage::PieceIndexRequest(req) => {
+                            let res = piece_strategy.get_piece_index(req.addr, self.endgame_mode);
 
-                    let _ = req.ack.send(());
-                }
-                piece_index_req = self.rx_piece_index_req.recv() => {
-                    let req = piece_index_req.expect("Error receiving peer piece request");
+                            let _ = req.chan.send(res);
+                        },
+                        AdminMessage::PieceDownload(req) => {
+                            let index: usize = req.index.try_into().unwrap();
 
-                    let res = piece_strategy.get_piece_index(req.addr, self.endgame_mode);
+                            let mut prog = in_progress.lock().await;
+                            let mut down = downloaded.lock().await;
 
-                    let _ = req.chan.send(res);
-                }
-                piece_download = self.rx_piece_download.recv() => {
-                    let index = piece_download.expect("Error receiving piece download update").index;
-                    let index: usize = index.try_into().unwrap();
+                            prog[index] = false;
+                            down[index] = true;
 
-                    let mut prog = in_progress.lock().await;
-                    let mut down = downloaded.lock().await;
-
-                    prog[index] = false;
-                    down[index] = true;
-
-                    // Test if all pieces have been downloaded or are in-progress:
-                    if !self.endgame_mode {
-                        self.endgame_mode = prog.iter().zip(down.iter()).all(|(&a, &b)| a || b);
+                            // Test if all pieces have been downloaded or are in-progress:
+                            if !self.endgame_mode {
+                                self.endgame_mode = prog.iter().zip(down.iter()).all(|(&a, &b)| a || b);
+                            }
+                        }
+                        AdminMessage::PeerDisconnect(_req) => {
+                            // TODO: update piece strategy when peer disconnects
+                        },
                     }
-                }
-                // TODO: update piece strategy when peer disconnects
-                peer_disconnect = self.rx_peer_disconnect.recv() => {
-                    let _payload = peer_disconnect.expect("Error: Peer disconnected too quickly");
                 }
                 _ = ui_refresh_interval.tick() => {
                     let _ = self.tx_progress_bar.send((

@@ -22,16 +22,17 @@ use crate::parser::metadata::Metadata;
 
 use connection::Connection;
 
+use super::admin_message::{
+    AdminMessage, PeerBitfield, PeerDisconnect, PieceDownload, PieceIndexRequest,
+};
+
 pub struct PeerHandler {
     peer_state: PeerState,
     md: Arc<Metadata>,
     addr: Arc<str>,
     output_dir: Arc<str>,
     client_pieces: BitVecMutex,
-    tx_peer_bitfield: mpsc::Sender<PeerBitfield>,
-    tx_piece_index_req: mpsc::Sender<PieceIndexRequest>,
-    tx_piece_download: mpsc::Sender<PieceDownload>,
-    tx_peer_disconnect: mpsc::Sender<PeerDisconnect>,
+    tx_admin_message: mpsc::Sender<AdminMessage>,
 }
 
 impl PeerHandler {
@@ -40,10 +41,7 @@ impl PeerHandler {
         addr: &str,
         output_dir: Arc<str>,
         client_pieces: BitVecMutex,
-        tx_peer_bitfield: mpsc::Sender<PeerBitfield>,
-        tx_piece_index_req: mpsc::Sender<PieceIndexRequest>,
-        tx_piece_download: mpsc::Sender<PieceDownload>,
-        tx_peer_disconnect: mpsc::Sender<PeerDisconnect>,
+        tx_admin_message: mpsc::Sender<AdminMessage>,
     ) {
         let handler = PeerHandler {
             peer_state: PeerState {
@@ -56,10 +54,7 @@ impl PeerHandler {
             addr: addr.into(),
             output_dir,
             client_pieces,
-            tx_peer_bitfield,
-            tx_piece_index_req,
-            tx_piece_download,
-            tx_peer_disconnect,
+            tx_admin_message,
         };
 
         tokio::spawn(PeerHandler::start(handler));
@@ -110,10 +105,10 @@ impl PeerHandler {
                 Ok(v) => v,
                 Err(_) => {
                     let _ = self
-                        .tx_peer_disconnect
-                        .send(PeerDisconnect {
+                        .tx_admin_message
+                        .send(AdminMessage::PeerDisconnect(PeerDisconnect {
                             addr: self.addr.clone(),
-                        })
+                        }))
                         .await;
                     return Err(Box::new(IOError::new(
                         ErrorKind::ConnectionReset,
@@ -173,7 +168,10 @@ impl PeerHandler {
                                 vec![0; self.md.info.piece_length.try_into().unwrap()],
                             );
                             file_builder::write(&self.md, &self.output_dir, index, 0, &data)?;
-                            let _ = self.tx_piece_download.send(PieceDownload { index }).await;
+                            let _ = self
+                                .tx_admin_message
+                                .send(AdminMessage::PieceDownload(PieceDownload { index }))
+                                .await;
 
                             // Request piece from peer manager - if no valid ones, we are no longer interested in peer.
                             piece_index = self.get_piece_index().await;
@@ -227,12 +225,12 @@ impl PeerHandler {
         let (tx, rx) = oneshot::channel();
 
         let res = self
-            .tx_peer_bitfield
-            .send(PeerBitfield {
+            .tx_admin_message
+            .send(AdminMessage::PeerBitfield(PeerBitfield {
                 ack: tx,
                 addr: self.addr.clone(),
                 peer_bitfield: bitfield,
-            })
+            }))
             .await;
 
         // Wait for manager response before returning
@@ -249,11 +247,11 @@ impl PeerHandler {
     async fn get_piece_index(&self) -> Option<u32> {
         let (tx, rx) = oneshot::channel();
         let _ = self
-            .tx_piece_index_req
-            .send(PieceIndexRequest {
+            .tx_admin_message
+            .send(AdminMessage::PieceIndexRequest(PieceIndexRequest {
                 chan: tx,
                 addr: self.addr.clone(),
-            })
+            }))
             .await;
 
         match rx.await {
@@ -280,25 +278,6 @@ fn bitvec_to_bytes(bits: &BitVec<u8, Msb0>) -> Vec<u8> {
     bv.force_align();
     let res: Vec<u8> = bv.into_vec();
     res
-}
-
-pub(crate) struct PeerBitfield {
-    pub ack: oneshot::Sender<()>,
-    pub addr: Arc<str>,
-    pub peer_bitfield: Vec<bool>,
-}
-
-pub(crate) struct PieceIndexRequest {
-    pub chan: oneshot::Sender<Option<u32>>,
-    pub addr: Arc<str>,
-}
-
-pub(crate) struct PieceDownload {
-    pub index: u32,
-}
-
-pub(crate) struct PeerDisconnect {
-    pub addr: Arc<str>,
 }
 
 pub(crate) struct PeerState {
