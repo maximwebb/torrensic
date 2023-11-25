@@ -19,11 +19,11 @@ use crate::{
 
 /*
     TODO FOR NEXT TIME: 
-    - Test the (hitherto untested) code in data.rs
+    [x] Test the (hitherto untested) code in data.rs
 
     - Look into passing by reference instead of copying for widgets
-    - Unify messages between manager and peer handlers under one type
-    - Pattern match according to which message was sent
+    [x] Unify messages between manager and peer handlers under one type
+    [x] Pattern match according to which message was sent
     - Look into splitting UI data publishing code out of manager
 
 */
@@ -40,19 +40,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    let md = Arc::new(md);
+
     let tracker_info = client::tracker::req_tracker_info(&md).await?;
-    // println!("Found {} peers.", { tracker_info.peers.len() });
+    let peers = Arc::new(tracker_info.peers);
 
     let (tx_progress, rx_progress) = watch::channel((0, 0));
     let (tx_in_progress_pieces, rx_in_progress_pieces) =
         watch::channel(vec![false; md.num_pieces()]);
     let (tx_downloaded_pieces, rx_downloaded_pieces) = watch::channel(vec![false; md.num_pieces()]);
     let (tx_speed, rx_speed) = watch::channel(0.0);
-    let md = Arc::new(md);
 
     let peer_manager = Manager::new(
         md.clone(),
-        tracker_info.peers.clone(), // TODO: make tracker_info type Arc
+        peers.clone(),
         &output_dir,
         tx_progress,
         tx_in_progress_pieces,
@@ -61,7 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let ui_controller = Controller::new(
         md.clone(),
-        tracker_info.peers.clone(),
+        peers.clone(),
         rx_progress,
         rx_in_progress_pieces,
         rx_downloaded_pieces,

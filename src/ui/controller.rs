@@ -46,7 +46,7 @@ pub(crate) struct Controller {
 impl Controller {
     pub(crate) async fn new(
         md: Arc<Metadata>,
-        peers: Vec<PeerInfo>,
+        peers: Arc<Vec<PeerInfo>>,
         rx_progress: watch::Receiver<(u32, u32)>,
         rx_in_progress_pieces: watch::Receiver<Vec<bool>>,
         rx_downloaded_pieces: watch::Receiver<Vec<bool>>,

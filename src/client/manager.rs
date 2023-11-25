@@ -39,7 +39,7 @@ impl Manager {
     // All peer handler threads are started on creation
     pub(crate) fn new(
         md: Arc<Metadata>,
-        peers: Vec<PeerInfo>,
+        peers: Arc<Vec<PeerInfo>>,
         output_dir: &str,
         tx_progress_bar: watch::Sender<(u32, u32)>,
         tx_in_progress: watch::Sender<Vec<bool>>,
@@ -55,7 +55,7 @@ impl Manager {
 
         let dir_ref: Arc<str> = Arc::from(output_dir);
 
-        for peer in peers {
+        for peer in peers.iter() {
             PeerHandler::init(
                 md.clone(),
                 &peer.to_string(),
