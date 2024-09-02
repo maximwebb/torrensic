@@ -3,12 +3,12 @@ use bendy::{
     encoding::{Error as EncError, ToBencode},
 };
 
-pub(crate) struct FileInfo {
+pub(crate) struct FilePathInfo {
     pub length: u32,
     pub path: Vec<String>,
 }
 
-impl FromBencode for FileInfo {
+impl FromBencode for FilePathInfo {
     const EXPECTED_RECURSION_DEPTH: usize = 4;
 
     fn decode_bencode_object(object: Object) -> Result<Self, DecError>
@@ -39,11 +39,11 @@ impl FromBencode for FileInfo {
         let length = length.ok_or_else(|| DecError::missing_field("length"))?;
         let path = path.ok_or_else(|| DecError::missing_field("path"))?;
 
-        Ok(FileInfo { length, path })
+        Ok(FilePathInfo { length, path })
     }
 }
 
-impl ToBencode for FileInfo {
+impl ToBencode for FilePathInfo {
     const MAX_DEPTH: usize = 4;
 
     fn encode(&self, encoder: bendy::encoding::SingleItemEncoder) -> Result<(), EncError> {

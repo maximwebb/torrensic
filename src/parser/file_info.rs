@@ -3,38 +3,58 @@ use bendy::{
     encoding::{AsString, Error as EncError, SingleItemEncoder, ToBencode},
 };
 
-use super::fileinfo::FileInfo;
+use super::file_path_info::FilePathInfo;
 
 // TODO: Should this be combined with fileinfo?
-pub(crate) struct Info {
-    pub files: Vec<FileInfo>,
+pub(crate) struct FileInfo {
+    pub files: Vec<FilePathInfo>,
     pub name: String,
     pub piece_length: u32,
     pub pieces: Vec<u8>,
     pub private: Option<u32>,
 }
 
-impl FromBencode for Info {
+impl FileInfo {
+    pub(crate) fn get_from_file(path: &String) -> Result<Self, DecError> {
+        let bytes = std::fs::read(path).expect("Failed to read file");
+        return FileInfo::from_bencode(&bytes);
+    }
+}
+
+impl FromBencode for FileInfo {
     const EXPECTED_RECURSION_DEPTH: usize = 4;
 
     fn decode_bencode_object(object: Object) -> Result<Self, DecError>
     where
         Self: Sized,
     {
-        let mut files: Option<Vec<FileInfo>> = None;
+        let mut files: Option<Vec<FilePathInfo>> = None;
         let mut name: Option<String> = None;
         let mut pieces: Option<Vec<u8>> = None;
         let mut piece_length: Option<u32> = None;
         let mut private: Option<u32> = None;
 
-        let mut dict = match object.try_into_dictionary() {
-            Ok(v) => v,
-            Err(e) => {
-                return Err(e);
+        let mut dict = object.try_into_dictionary()?;
+
+        // Locate info dictionary in torrent file
+        let mut info_dict = None;
+        while let Some(pair) = dict.next_pair().unwrap() {
+            match pair {
+                (b"info", val) => {
+                    info_dict = match val.try_into_dictionary() {
+                        Ok(v) => Some(v),
+                        Err(e) => {
+                            return Err(e);
+                        }
+                    }
+                }
+                _ => continue
             }
         };
 
-        while let Some(pair) = dict.next_pair().unwrap() {
+        let mut info_dict = info_dict.expect("Unable to find info field");
+
+        while let Some(pair) = info_dict.next_pair().unwrap() {
             match pair {
                 (b"files", val) => {
                     files = Vec::decode_bencode_object(val).ok();
@@ -55,9 +75,7 @@ impl FromBencode for Info {
                         .context("private")
                         .map(Some)?;
                 }
-                _ => {
-                    continue;
-                }
+                _ => continue
             }
         }
 
@@ -66,7 +84,7 @@ impl FromBencode for Info {
         let pieces = pieces.ok_or_else(|| DecError::missing_field("pieces"))?;
         let piece_length = piece_length.ok_or_else(|| DecError::missing_field("piece_length"))?;
 
-        Ok(Info {
+        Ok(FileInfo {
             files,
             name,
             piece_length,
@@ -76,7 +94,7 @@ impl FromBencode for Info {
     }
 }
 
-impl ToBencode for Info {
+impl ToBencode for FileInfo {
     const MAX_DEPTH: usize = 4;
 
     fn encode(&self, encoder: SingleItemEncoder) -> Result<(), EncError> {
@@ -94,3 +112,4 @@ impl ToBencode for Info {
         Ok(())
     }
 }
+

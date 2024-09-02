@@ -9,50 +9,56 @@ use builder::file_builder;
 use client::manager::run_peer_manager_task;
 use tokio::{self, sync::watch};
 
-use parser::metadata::read_metadata;
+use parser::bootstrap_info::read_metadata;
 
 use crate::{
     client::manager::Manager,
-    ui::controller::{run_controller_task, Controller},
+    ui::controller::{run_controller_task, Controller}, parser::torrent_info::{get_torrent_info, TorrentType},
 };
 
 
 /*
     TODO FOR NEXT TIME: 
-    [x] Test the (hitherto untested) code in data.rs
-
-    - Look into passing by reference instead of copying for widgets
-    [x] Unify messages between manager and peer handlers under one type
-    [x] Pattern match according to which message was sent
-    - Look into splitting UI data publishing code out of manager
+    [] Finish the get_torrent_info function
+    [] Use this data to retrieve peer_info from tracker
+    [] Also rewrite peer info so it contains list of endpoints
 
 */
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let torrent_file = String::from("torrents/airfryer.torrent");
-    let output_dir = String::from("downloads");
-    let md = read_metadata(&torrent_file).unwrap();
+    let torrent_info = get_torrent_info(String::from("torrents/airfryer.torrent"))?;
+    // let md = read_metadata(&torrent_file).unwrap();
+    
+    let (file_info, peer_info) = match torrent_info {
+        TorrentType::File(bootstrap_info, file_info) => {
+            todo!()
+        }
+        TorrentType::Magnet(bootstrap_info) => {
+            todo!()
+        }
+    };
 
-    match file_builder::create(&md, &output_dir, true) {
+    let output_dir = String::from("downloads");
+    match file_builder::create(&file_info, &output_dir, true) {
         Ok(_) => {}
         Err(e) => {
             println!("{:?}", e)
         }
     }
 
-    let md = Arc::new(md);
+    let file_info = Arc::new(file_info);
 
-    let tracker_info = client::tracker::req_tracker_info(&md).await?;
+    let tracker_info = client::tracker::req_tracker_info(&file_info).await?;
     let peers = Arc::new(tracker_info.peers);
 
     let (tx_progress, rx_progress) = watch::channel((0, 0));
     let (tx_in_progress_pieces, rx_in_progress_pieces) =
-        watch::channel(vec![false; md.num_pieces()]);
-    let (tx_downloaded_pieces, rx_downloaded_pieces) = watch::channel(vec![false; md.num_pieces()]);
+        watch::channel(vec![false; file_info.num_pieces()]);
+    let (tx_downloaded_pieces, rx_downloaded_pieces) = watch::channel(vec![false; file_info.num_pieces()]);
     let (tx_speed, rx_speed) = watch::channel(0.0);
 
     let peer_manager = Manager::new(
-        md.clone(),
+        file_info.clone(),
         peers.clone(),
         &output_dir,
         tx_progress,

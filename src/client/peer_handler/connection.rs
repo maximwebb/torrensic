@@ -12,7 +12,7 @@ use tokio::{
 };
 
 use read_task::{run_read_task, ReadTask};
-use crate::parser::metadata::Metadata;
+use crate::parser::bootstrap_info::BootstrapInfo;
 
 use self::handshake::handshake;
 use super::message::interested::Interested;
@@ -28,7 +28,7 @@ pub struct Connection {
 impl Connection {
     pub(crate) async fn new(
         addr: &str,
-        md: &Metadata,
+        md: &BootstrapInfo,
         cancel_sender: mpsc::Sender<()>,
     ) -> Result<Self, Box<dyn Error>> {
         let socket = TcpStream::connect(addr);
@@ -85,7 +85,7 @@ impl Connection {
 
     pub(crate) async fn request_block(
         &mut self,
-        md: &Metadata,
+        md: &BootstrapInfo,
         piece_index: u32,
         block_index: u32,
     ) -> Result<(), Box<dyn Error>> {

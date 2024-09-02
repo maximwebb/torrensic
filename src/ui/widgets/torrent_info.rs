@@ -7,10 +7,10 @@ use ratatui::{
     Frame,
 };
 
-use crate::{parser::metadata::Metadata, ui::Draw};
+use crate::{parser::bootstrap_info::BootstrapInfo, ui::Draw};
 
 pub(crate) struct TorrentInfo {
-    pub(crate) md: Arc<Metadata>,
+    pub(crate) md: Arc<BootstrapInfo>,
 }
 
 impl Draw for TorrentInfo {

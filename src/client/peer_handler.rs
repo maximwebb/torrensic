@@ -18,7 +18,7 @@ use message::Message;
 
 use crate::builder::file_builder;
 use crate::client::manager::BitVecMutex;
-use crate::parser::metadata::Metadata;
+use crate::parser::bootstrap_info::BootstrapInfo;
 
 use connection::Connection;
 
@@ -28,7 +28,7 @@ use super::admin_message::{
 
 pub struct PeerHandler {
     peer_state: PeerState,
-    md: Arc<Metadata>,
+    md: Arc<BootstrapInfo>,
     addr: Arc<str>,
     output_dir: Arc<str>,
     client_pieces: BitVecMutex,
@@ -37,7 +37,7 @@ pub struct PeerHandler {
 
 impl PeerHandler {
     pub(crate) fn init(
-        md: Arc<Metadata>,
+        md: Arc<BootstrapInfo>,
         addr: &str,
         output_dir: Arc<str>,
         client_pieces: BitVecMutex,
