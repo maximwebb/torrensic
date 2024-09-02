@@ -7,10 +7,10 @@ use std::{
 
 use bitvec::{prelude::Msb0, vec::BitVec};
 
-use crate::parser::{fileinfo::FileInfo, metadata::Metadata};
+use crate::parser::{file_path_info::FilePathInfo, bootstrap_info::BootstrapInfo};
 
-pub(crate) fn create(md: &Metadata, dir: &String, overwrite: bool) -> io::Result<()> {
-    let files: &Vec<FileInfo> = &md.info.files;
+pub(crate) fn create(md: &BootstrapInfo, dir: &String, overwrite: bool) -> io::Result<()> {
+    let files: &Vec<FilePathInfo> = &md.info.files;
     let remove_dir = &format!("{}/{}", dir, &md.info.name);
     if Path::new(remove_dir).is_dir() {
         if overwrite {
@@ -45,7 +45,7 @@ pub(crate) fn create(md: &Metadata, dir: &String, overwrite: bool) -> io::Result
 
 //TODO: decide whether to remove begin parameter.
 pub(crate) fn write(
-    md: &Metadata,
+    md: &BootstrapInfo,
     dir: &str,
     index: u32,
     begin: u32,
@@ -87,7 +87,7 @@ pub(crate) fn write(
     Ok(())
 }
 
-pub(crate) fn load_bitfield(md: &Metadata, dir: &str) -> io::Result<BitVec<u8, Msb0>> {
+pub(crate) fn load_bitfield(md: &BootstrapInfo, dir: &str) -> io::Result<BitVec<u8, Msb0>> {
     let path_str = &format!("{}/{}/bitfield", dir, &md.info.name);
     let raw = match fs::read(path_str) {
         Ok(file) => file,

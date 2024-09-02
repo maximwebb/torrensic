@@ -8,11 +8,11 @@ use tokio::{
 
 use crate::{
     builder::file_builder,
-    parser::{metadata::Metadata, trackerinfo::PeerInfo},
+    parser::{trackerinfo::PeerInfo, file_info::FileInfo},
 };
 
 use super::{
-    admin_message::{AdminMessage, PeerBitfield, PeerDisconnect, PieceDownload, PieceIndexRequest},
+    admin_message::AdminMessage,
     peer_handler::PeerHandler,
     piece_strategy::PieceStrategy,
 };
@@ -24,7 +24,7 @@ pub(crate) type BitVecMutex = Arc<Mutex<BitVec<u8, Msb0>>>;
     - Start looking at magnet links
 */
 pub(crate) struct Manager {
-    md: Arc<Metadata>,
+    file_info: Arc<FileInfo>,
     download_history: RingBuffer,
     endgame_mode: bool,
     // TODO: distinguish UI from peer handler channels
@@ -38,7 +38,7 @@ pub(crate) struct Manager {
 impl Manager {
     // All peer handler threads are started on creation
     pub(crate) fn new(
-        md: Arc<Metadata>,
+        file_info: Arc<FileInfo>,
         peers: Arc<Vec<PeerInfo>>,
         output_dir: &str,
         tx_progress_bar: watch::Sender<(u32, u32)>,
@@ -57,7 +57,7 @@ impl Manager {
 
         for peer in peers.iter() {
             PeerHandler::init(
-                md.clone(),
+                file_info.clone(),
                 &peer.to_string(),
                 dir_ref.clone(),
                 client_pieces_ref.clone(),
@@ -66,7 +66,7 @@ impl Manager {
         }
 
         Ok(Manager {
-            md,
+            file_info: file_info,
             download_history: RingBuffer::new(15),
             endgame_mode: false,
             tx_progress_bar,
@@ -85,7 +85,7 @@ impl Manager {
         let downloaded = Arc::new(Mutex::new(vec![false; self.md.num_pieces()]));
 
         let mut piece_strategy = PieceStrategy::new(
-            self.md.num_pieces(),
+            self.file_info.num_pieces(),
             Arc::clone(&in_progress),
             Arc::clone(&downloaded),
         );
@@ -127,13 +127,13 @@ impl Manager {
                 _ = ui_refresh_interval.tick() => {
                     let _ = self.tx_progress_bar.send((
                         Self::count_ones(&downloaded.lock().await.to_vec()),
-                        self.md.num_pieces().try_into().unwrap(),
+                        self.file_info.num_pieces().try_into().unwrap(),
                     ));
 
                     let _ = self.tx_in_progress.send(in_progress.lock().await.clone());
                     let _ = self.tx_downloaded.send(downloaded.lock().await.clone());
 
-                    let speed = (self.download_history.average() / 0.1) * (self.md.info.piece_length as f32 / 1_000.0);
+                    let speed = (self.download_history.average() / 0.1) * (self.file_info.piece_length as f32 / 1_000.0);
 
                     let _ = self.tx_speed.send(speed);
                 }

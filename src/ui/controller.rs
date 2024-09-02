@@ -20,7 +20,7 @@ use ratatui::{
     Terminal,
 };
 
-use crate::parser::{metadata::Metadata, trackerinfo::PeerInfo};
+use crate::parser::{bootstrap_info::BootstrapInfo, trackerinfo::PeerInfo};
 
 use super::{
     components::{title::Title, torrent_progress::TorrentProgress},
@@ -33,7 +33,7 @@ use super::{
 };
 
 pub(crate) struct Controller {
-    pub(crate) md: Arc<Metadata>,
+    pub(crate) md: Arc<BootstrapInfo>,
     pub(crate) rx_progress: watch::Receiver<(u32, u32)>,
     pub(crate) rx_in_progress_pieces: watch::Receiver<Vec<bool>>,
     pub(crate) rx_downloaded_pieces: watch::Receiver<Vec<bool>>,
@@ -45,7 +45,7 @@ pub(crate) struct Controller {
 
 impl Controller {
     pub(crate) async fn new(
-        md: Arc<Metadata>,
+        md: Arc<BootstrapInfo>,
         peers: Arc<Vec<PeerInfo>>,
         rx_progress: watch::Receiver<(u32, u32)>,
         rx_in_progress_pieces: watch::Receiver<Vec<bool>>,

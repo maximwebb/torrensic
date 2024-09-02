@@ -6,10 +6,10 @@ use tokio::{
     net::TcpStream,
 };
 
-use crate::parser::metadata::Metadata;
+use crate::parser::bootstrap_info::BootstrapInfo;
 
 pub(crate) async fn handshake(
-    md: &Metadata,
+    md: &BootstrapInfo,
     rd: &mut ReadHalf<TcpStream>,
     wr: &mut WriteHalf<TcpStream>,
 ) -> Result<Vec<u8>, Box<dyn Error>> {

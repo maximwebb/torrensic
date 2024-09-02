@@ -6,16 +6,15 @@ use bendy::{
 use sha1::{Digest, Sha1};
 use urlencoding::encode_binary;
 
-use super::info::Info;
+use super::file_info::FileInfo;
 
-pub(crate) struct Metadata {
+pub(crate) struct BootstrapInfo {
     pub announce: Option<String>,
     pub announce_list: Vec<Vec<String>>,
-    pub info: Info,
     pub info_hash: Vec<u8>,
 }
 
-impl FromBencode for Metadata {
+impl FromBencode for BootstrapInfo {
     const EXPECTED_RECURSION_DEPTH: usize = 5;
 
     fn decode_bencode_object(object: bendy::decoding::Object) -> Result<Self, DecError>
@@ -24,7 +23,7 @@ impl FromBencode for Metadata {
     {
         let mut announce: Option<String> = None;
         let mut announce_list: Option<Vec<Vec<String>>> = None;
-        let mut info: Option<Info> = None;
+        let mut info: Option<FileInfo> = None;
         let mut info_hash: Option<Vec<u8>> = None;
 
         let mut dict = object.try_into_dictionary()?;
@@ -45,7 +44,7 @@ impl FromBencode for Metadata {
                     hasher.update(raw);
                     info_hash = Some(hasher.finalize().to_vec());
 
-                    info = Info::from_bencode(raw).context("info").ok();
+                    info = FileInfo::from_bencode(raw).context("info").ok();
                 }
                 _ => {
                     continue;
@@ -58,7 +57,7 @@ impl FromBencode for Metadata {
         let info = info.ok_or_else(|| DecError::missing_field("info"))?;
         let info_hash = info_hash.ok_or_else(|| DecError::missing_field("info_hash"))?;
 
-        Ok(Metadata {
+        Ok(BootstrapInfo {
             announce,
             announce_list,
             info,
@@ -67,7 +66,7 @@ impl FromBencode for Metadata {
     }
 }
 
-impl ToBencode for Metadata {
+impl ToBencode for BootstrapInfo {
     const MAX_DEPTH: usize = 5;
 
     fn encode(&self, encoder: bendy::encoding::SingleItemEncoder) -> Result<(), EncError> {
@@ -84,7 +83,7 @@ impl ToBencode for Metadata {
     }
 }
 
-impl Metadata {
+impl BootstrapInfo {
     pub fn num_pieces(&self) -> usize {
         return self.info.pieces.len() / 20;
     }
@@ -105,14 +104,14 @@ impl Metadata {
     }
 }
 
-pub(crate) fn read_metadata(path: &String) -> Result<Metadata, DecError> {
+pub(crate) fn read_metadata(path: &String) -> Result<BootstrapInfo, DecError> {
     let res = std::fs::read(path).expect("Failed to read file");
-    let metadata = Metadata::from_bencode(&res)?;
+    let metadata = BootstrapInfo::from_bencode(&res)?;
 
     Ok(metadata)
 }
 
-pub(crate) fn get_urlenc_info_hash(metadata: &Metadata) -> Result<String, EncError> {
+pub(crate) fn get_urlenc_info_hash(metadata: &BootstrapInfo) -> Result<String, EncError> {
     let bytes = metadata.info.to_bencode()?;
 
     let mut hasher: Sha1 = Sha1::new();

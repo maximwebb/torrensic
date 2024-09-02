@@ -9,12 +9,12 @@ use tokio::{net::UdpSocket, time::timeout};
 use urlencoding::encode_binary;
 
 use crate::parser::{
-    metadata::{get_urlenc_info_hash, Metadata},
+    bootstrap_info::{get_urlenc_info_hash, BootstrapInfo},
     trackerinfo::TrackerInfo,
 };
 
 pub(crate) async fn req_tracker_info(
-    md: &Metadata,
+    md: &BootstrapInfo,
 ) -> Result<TrackerInfo, Box<dyn std::error::Error>> {
     for tracker in &md.announce_list {
         let tracker = &tracker[0];
@@ -37,7 +37,7 @@ pub(crate) async fn req_tracker_info(
 
 async fn req_http_tracker_info(
     tracker_url: &String,
-    md: &Metadata,
+    md: &BootstrapInfo,
 ) -> Result<TrackerInfo, Box<dyn std::error::Error>> {
     let hash = get_urlenc_info_hash(&md).unwrap();
     let peer_id = encode_binary(b"-TO0000-0123456789AB");
@@ -61,7 +61,7 @@ async fn req_http_tracker_info(
 
 async fn req_udp_tracker_info(
     tracker_url: &String,
-    md: &Metadata,
+    md: &BootstrapInfo,
 ) -> Result<TrackerInfo, Box<dyn std::error::Error>> {
     let url = url::Url::parse(tracker_url).unwrap();
     let addr = match url.socket_addrs(|| None) {
@@ -154,7 +154,7 @@ fn connect_msg(trans_id: u32) -> Vec<u8> {
     .concat()
 }
 
-fn announce_msg(md: &Metadata, conn_id: u64, trans_id: u32, peer_id: Option<Vec<u8>>) -> Vec<u8> {
+fn announce_msg(md: &BootstrapInfo, conn_id: u64, trans_id: u32, peer_id: Option<Vec<u8>>) -> Vec<u8> {
     let action: u32 = 1;
     let info_hash = &md.info_hash;
     let peer_id = match peer_id {
