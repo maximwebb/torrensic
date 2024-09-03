@@ -1,4 +1,3 @@
-pub mod fileinfo;
-pub mod info;
+pub mod file_info;
 pub mod metadata;
-pub mod trackerinfo;
+pub mod tracker_info;

@@ -7,10 +7,10 @@ use std::{
 
 use bitvec::{prelude::Msb0, vec::BitVec};
 
-use crate::parser::{fileinfo::FileInfo, metadata::Metadata};
+use crate::parser::{file_info::FilePathInfo, metadata::Metadata};
 
 pub(crate) fn create(md: &Metadata, dir: &String, overwrite: bool) -> io::Result<()> {
-    let files: &Vec<FileInfo> = &md.info.files;
+    let files: &Vec<FilePathInfo> = &md.info.files;
     let remove_dir = &format!("{}/{}", dir, &md.info.name);
     if Path::new(remove_dir).is_dir() {
         if overwrite {

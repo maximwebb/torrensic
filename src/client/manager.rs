@@ -8,7 +8,7 @@ use tokio::{
 
 use crate::{
     builder::file_builder,
-    parser::{metadata::Metadata, trackerinfo::PeerInfo},
+    parser::{metadata::Metadata, tracker_info::PeerInfo},
 };
 
 use super::{

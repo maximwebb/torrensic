@@ -3,25 +3,65 @@ use bendy::{
     encoding::{AsString, Error as EncError, SingleItemEncoder, ToBencode},
 };
 
-use super::fileinfo::FileInfo;
+pub(crate) struct FilePathInfo {
+    pub length: u32,
+    pub path: Vec<String>,
+}
 
-// TODO: Should this be combined with fileinfo?
-pub(crate) struct Info {
-    pub files: Vec<FileInfo>,
+pub(crate) struct FileInfo {
+    pub files: Vec<FilePathInfo>,
     pub name: String,
     pub piece_length: u32,
     pub pieces: Vec<u8>,
     pub private: Option<u32>,
 }
 
-impl FromBencode for Info {
+/////////////////
+// Decoding
+
+impl FromBencode for FilePathInfo {
     const EXPECTED_RECURSION_DEPTH: usize = 4;
 
     fn decode_bencode_object(object: Object) -> Result<Self, DecError>
     where
         Self: Sized,
     {
-        let mut files: Option<Vec<FileInfo>> = None;
+        let mut length: Option<u32> = None;
+        let mut path: Option<Vec<String>> = None;
+
+        let mut dict = object.try_into_dictionary()?;
+
+        while let Some(pair) = dict.next_pair()? {
+            match pair {
+                (b"length", val) => {
+                    length = u32::decode_bencode_object(val)
+                        .context("length")
+                        .map(Some)?;
+                }
+                (b"path", val) => {
+                    path = Vec::decode_bencode_object(val).context("path").map(Some)?;
+                }
+                _ => {
+                    continue;
+                }
+            }
+        }
+
+        let length = length.ok_or_else(|| DecError::missing_field("length"))?;
+        let path = path.ok_or_else(|| DecError::missing_field("path"))?;
+
+        Ok(FilePathInfo { length, path })
+    }
+}
+
+impl FromBencode for FileInfo {
+    const EXPECTED_RECURSION_DEPTH: usize = 4;
+
+    fn decode_bencode_object(object: Object) -> Result<Self, DecError>
+    where
+        Self: Sized,
+    {
+        let mut files: Option<Vec<FilePathInfo>> = None;
         let mut name: Option<String> = None;
         let mut pieces: Option<Vec<u8>> = None;
         let mut piece_length: Option<u32> = None;
@@ -66,7 +106,7 @@ impl FromBencode for Info {
         let pieces = pieces.ok_or_else(|| DecError::missing_field("pieces"))?;
         let piece_length = piece_length.ok_or_else(|| DecError::missing_field("piece_length"))?;
 
-        Ok(Info {
+        Ok(FileInfo {
             files,
             name,
             piece_length,
@@ -76,7 +116,23 @@ impl FromBencode for Info {
     }
 }
 
-impl ToBencode for Info {
+/////////////////
+// Encoding
+
+impl ToBencode for FilePathInfo {
+    const MAX_DEPTH: usize = 4;
+
+    fn encode(&self, encoder: bendy::encoding::SingleItemEncoder) -> Result<(), EncError> {
+        encoder.emit_dict(|mut e| {
+            e.emit_pair(b"length", &self.length)?;
+            e.emit_pair(b"path", &self.path)
+        })?;
+
+        Ok(())
+    }
+}
+
+impl ToBencode for FileInfo {
     const MAX_DEPTH: usize = 4;
 
     fn encode(&self, encoder: SingleItemEncoder) -> Result<(), EncError> {

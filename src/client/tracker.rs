@@ -10,7 +10,7 @@ use urlencoding::encode_binary;
 
 use crate::parser::{
     metadata::{get_urlenc_info_hash, Metadata},
-    trackerinfo::TrackerInfo,
+    tracker_info::TrackerInfo,
 };
 
 pub(crate) async fn req_tracker_info(

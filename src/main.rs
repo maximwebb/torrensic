@@ -19,12 +19,10 @@ use crate::{
 
 /*
     TODO FOR NEXT TIME: 
-    [x] Test the (hitherto untested) code in data.rs
-
-    - Look into passing by reference instead of copying for widgets
-    [x] Unify messages between manager and peer handlers under one type
-    [x] Pattern match according to which message was sent
-    - Look into splitting UI data publishing code out of manager
+    [ ] Unfinished changes are in magnet-links branch
+    [ ] Create trait from Metadata, allowing you to use varying levels of information at different stages
+    [ ] Make piece_strategy and peer_handler generic - so it can be used for both acquiring files and metadata. What sort of customisation points are required?
+    [ ] Move above into torrent_protocol.rs - and flesh out protocol.rs and magnet_protocol.rs
 
 */
 #[tokio::main]

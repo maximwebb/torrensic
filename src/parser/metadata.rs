@@ -6,12 +6,12 @@ use bendy::{
 use sha1::{Digest, Sha1};
 use urlencoding::encode_binary;
 
-use super::info::Info;
+use super::file_info::FileInfo;
 
 pub(crate) struct Metadata {
     pub announce: Option<String>,
     pub announce_list: Vec<Vec<String>>,
-    pub info: Info,
+    pub info: FileInfo,
     pub info_hash: Vec<u8>,
 }
 
@@ -24,7 +24,7 @@ impl FromBencode for Metadata {
     {
         let mut announce: Option<String> = None;
         let mut announce_list: Option<Vec<Vec<String>>> = None;
-        let mut info: Option<Info> = None;
+        let mut info: Option<FileInfo> = None;
         let mut info_hash: Option<Vec<u8>> = None;
 
         let mut dict = object.try_into_dictionary()?;
@@ -45,7 +45,7 @@ impl FromBencode for Metadata {
                     hasher.update(raw);
                     info_hash = Some(hasher.finalize().to_vec());
 
-                    info = Info::from_bencode(raw).context("info").ok();
+                    info = FileInfo::from_bencode(raw).context("info").ok();
                 }
                 _ => {
                     continue;

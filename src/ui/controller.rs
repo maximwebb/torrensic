@@ -20,7 +20,7 @@ use ratatui::{
     Terminal,
 };
 
-use crate::parser::{metadata::Metadata, trackerinfo::PeerInfo};
+use crate::parser::{metadata::Metadata, tracker_info::PeerInfo};
 
 use super::{
     components::{title::Title, torrent_progress::TorrentProgress},
