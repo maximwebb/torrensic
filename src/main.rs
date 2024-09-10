@@ -2,6 +2,7 @@ mod builder;
 mod client;
 mod parser;
 mod ui;
+mod utils;
 
 use std::sync::Arc;
 
@@ -19,10 +20,9 @@ use crate::{
 
 /*
     TODO FOR NEXT TIME: 
-    [ ] Unfinished changes are in magnet-links branch
-    [ ] Create trait from Metadata, allowing you to use varying levels of information at different stages
-    [ ] Make piece_strategy and peer_handler generic - so it can be used for both acquiring files and metadata. What sort of customisation points are required?
-    [ ] Move above into torrent_protocol.rs - and flesh out protocol.rs and magnet_protocol.rs
+    [ ] Finish writing handle_message in piece_strategy
+    [ ] Figure out downloaded/prog vectors
+    [ ] Simplify manager
 
 */
 #[tokio::main]

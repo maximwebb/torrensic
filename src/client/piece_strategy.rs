@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use tokio::sync::Mutex;
 
-use core::cmp::PartialEq;
+use super::admin_message::AdminMessage;
 
 pub(crate) struct PieceStrategy {
     peer_bitfield_map: HashMap<String, Vec<bool>>,
@@ -10,6 +10,7 @@ pub(crate) struct PieceStrategy {
     piece_multiplicities: Vec<u32>,
     in_progress: Arc<Mutex<Vec<bool>>>,
     downloaded: Arc<Mutex<Vec<bool>>>,
+    endgame_mode: bool,
 }
 
 impl PieceStrategy {
@@ -24,7 +25,39 @@ impl PieceStrategy {
             piece_multiplicities: vec![0; num_pieces],
             in_progress,
             downloaded,
+            endgame_mode: false,
         };
+    }
+
+    pub async fn handle_message(&mut self, admin_message: AdminMessage) -> Result<(), ()> {
+        match admin_message {
+            AdminMessage::PeerBitfield(req) => {
+                let _ = self.update_bitfield(req.addr, req.peer_bitfield)?;
+                let _ = req.ack.send(());
+            }
+            AdminMessage::PieceIndexRequest(req) => {
+                let res = self.get_piece_index(req.addr);
+                let _ = req.chan.send(res);
+            }
+            AdminMessage::PieceDownload(req) => {
+                let index: usize = req.index.try_into().unwrap();
+
+                let mut prog = self.in_progress.lock().await;
+                let mut down = self.downloaded.lock().await;
+
+                prog[index] = false;
+                down[index] = true;
+
+                // Test if all pieces have been downloaded or are in-progress:
+                if !self.endgame_mode {
+                    self.endgame_mode = prog.iter().zip(down.iter()).all(|(&a, &b)| a || b);
+                }
+            }
+            AdminMessage::PeerDisconnect(req) => {
+                println!("{0} disconnected", req.addr);
+            }
+        }
+        return Ok(());
     }
 
     pub fn update_bitfield(&mut self, addr: Arc<str>, bitfield: Vec<bool>) -> Result<(), ()> {
@@ -52,7 +85,7 @@ impl PieceStrategy {
        - If not in endgame mode, not currently in progress
        - Owned by the fewest number of other peers
     */
-    pub fn get_piece_index(&mut self, addr: Arc<str>, endgame_mode: bool) -> Option<u32> {
+    pub fn get_piece_index(&mut self, addr: Arc<str>) -> Option<u32> {
         // return None;
         let peer_bitfield = self
             .peer_bitfield_map
@@ -71,7 +104,7 @@ impl PieceStrategy {
             .zip(downloaded.iter())
             .map(|((((i, n), &b1), &b2), &b3)| (i, n, b1, b2, b3))
             .fold(None, |acc: Option<(usize, u32)>, (i, n, b1, b2, b3)| {
-                if !b1 || (!endgame_mode && b2) || b3 {
+                if !b1 || (!self.endgame_mode && b2) || b3 {
                     acc
                 } else {
                     acc.map_or_else(

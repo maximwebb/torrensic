@@ -31,7 +31,7 @@ impl Draw for MapInfo {
                     resolution: MapResolution::High,
                 });
 
-                for (host, latlon) in self.ip_location_map.iter() {
+                for (_host, latlon) in self.ip_location_map.iter() {
                     if let Some(loc) = latlon {
                         ctx.print(loc.lon.into(), loc.lat.into(), "X".yellow());
                     }

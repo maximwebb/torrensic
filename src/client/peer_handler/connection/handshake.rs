@@ -39,7 +39,7 @@ pub(crate) async fn handshake(
         )));
     }
 
-    let remaining: Vec<u8> = buf[68..n].to_vec();
+    let remaining: Vec<u8> = if n > 68 { buf[68..n].to_vec() } else { Vec::new() };
 
     Ok(remaining)
 }

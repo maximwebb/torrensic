@@ -224,7 +224,7 @@ impl PeerHandler {
     async fn send_bitfield_update(&self, bitfield: Vec<bool>) {
         let (tx, rx) = oneshot::channel();
 
-        let res = self
+        let _ = self
             .tx_admin_message
             .send(AdminMessage::PeerBitfield(PeerBitfield {
                 ack: tx,
