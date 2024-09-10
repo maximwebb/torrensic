@@ -4,7 +4,7 @@ use tokio::sync::Mutex;
 
 use super::admin_message::AdminMessage;
 
-pub(crate) struct PieceStrategy {
+pub(crate) struct Strategy {
     peer_bitfield_map: HashMap<String, Vec<bool>>,
     num_pieces: usize,
     piece_multiplicities: Vec<u32>,
@@ -13,13 +13,13 @@ pub(crate) struct PieceStrategy {
     endgame_mode: bool,
 }
 
-impl PieceStrategy {
+impl Strategy {
     pub fn new(
         num_pieces: usize,
         in_progress: Arc<Mutex<Vec<bool>>>,
         downloaded: Arc<Mutex<Vec<bool>>>,
     ) -> Self {
-        return PieceStrategy {
+        return Strategy {
             peer_bitfield_map: HashMap::new(),
             num_pieces,
             piece_multiplicities: vec![0; num_pieces],

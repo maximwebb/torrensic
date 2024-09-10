@@ -15,7 +15,7 @@ use crate::{
 use super::{
     admin_message::AdminMessage,
     peer_handler::PeerHandler,
-    piece_strategy::PieceStrategy,
+    strategy::Strategy,
 };
 
 pub(crate) type BitVecMutex = Arc<Mutex<BitVec<u8, Msb0>>>;
@@ -83,7 +83,7 @@ impl Manager {
         let in_progress = Arc::new(Mutex::new(vec![false; self.md.num_pieces()]));
         let downloaded = Arc::new(Mutex::new(vec![false; self.md.num_pieces()]));
 
-        let mut piece_strategy = PieceStrategy::new(
+        let mut strategy = Strategy::new(
             self.md.num_pieces(),
             Arc::clone(&in_progress),
             Arc::clone(&downloaded),
@@ -93,7 +93,7 @@ impl Manager {
             tokio::select! {
                 admin_message = self.rx_admin_message.recv() => {
                     let admin_message = admin_message.expect("Error receiving message");
-                    let _ = piece_strategy.handle_message(admin_message).await;
+                    let _ = strategy.handle_message(admin_message).await;
                 }
                 _ = ui_refresh_interval.tick() => {
                     let _ = self.tx_progress_bar.send((
