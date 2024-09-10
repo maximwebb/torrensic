@@ -1,6 +1,7 @@
 mod builder;
 mod client;
 mod parser;
+mod torrent_info;
 mod ui;
 mod utils;
 
@@ -10,26 +11,29 @@ use builder::file_builder;
 use client::manager::run_peer_manager_task;
 use tokio::{self, sync::watch};
 
-use parser::metadata::read_metadata;
+use torrent_info::{tracker_acquirer::TrackerAcquirer, TorrentInfo, TorrentInfoAcquirer};
 
 use crate::{
     client::manager::Manager,
     ui::controller::{run_controller_task, Controller},
 };
 
-
 /*
-    TODO FOR NEXT TIME: 
-    [ ] Finish writing handle_message in piece_strategy
-    [ ] Figure out downloaded/prog vectors
-    [ ] Simplify manager
+    TODO FOR NEXT TIME:
+    [x] Finish writing handle_message in piece_strategy
+    [x] Figure out downloaded/prog vectors
+    [x] Simplify manager
 
 */
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let torrent_file = String::from("torrents/airfryer.torrent");
     let output_dir = String::from("downloads");
-    let md = read_metadata(&torrent_file).unwrap();
+
+    let acquirer = TrackerAcquirer {};
+    let (md, peers) = match acquirer.acquire(torrent_file).await? {
+        TorrentInfo { md, peers } => (Arc::new(md), Arc::new(peers)),
+    };
 
     match file_builder::create(&md, &output_dir, true) {
         Ok(_) => {}
@@ -37,11 +41,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("{:?}", e)
         }
     }
-
-    let md = Arc::new(md);
-
-    let tracker_info = client::tracker::req_tracker_info(&md).await?;
-    let peers = Arc::new(tracker_info.peers);
 
     let (tx_progress, rx_progress) = watch::channel((0, 0));
     let (tx_in_progress_pieces, rx_in_progress_pieces) =
@@ -65,7 +64,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         rx_in_progress_pieces,
         rx_downloaded_pieces,
         rx_speed,
-    ).await;
+    )
+    .await;
 
     tokio::spawn(run_peer_manager_task(peer_manager));
     run_controller_task(ui_controller).await;

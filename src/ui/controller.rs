@@ -27,7 +27,7 @@ use super::{
     data::{LatLon, get_ip_locations},
     widgets::{
         map_info::MapInfo, panel_tabs::PanelTabs, pieces_info::PiecesInfo,
-        torrent_info::TorrentInfo, torrent_list::TorrentList,
+        torrent_desc::TorrentDesc, torrent_list::TorrentList,
     },
     Draw,
 };
@@ -106,7 +106,7 @@ impl Controller {
 
                 match &mut self.panel_state {
                     PanelState::Hidden => {}
-                    PanelState::TorrentInfo(panel) => {
+                    PanelState::TorrentDesc(panel) => {
                         panel.draw(f, tabs_inner_area);
                     }
                     PanelState::PiecesInfo(panel) => {
@@ -134,7 +134,7 @@ impl Controller {
                                     min(torrent_list_len - 1, self.selected_torrent + 1);
                                 torrent_list.set_torrent(self.selected_torrent);
                             } else if key.code == KeyCode::Right || key.code == KeyCode::Enter {
-                                self.panel_state = PanelState::TorrentInfo(TorrentInfo {
+                                self.panel_state = PanelState::TorrentDesc(TorrentDesc {
                                     md: self.md.clone(),
                                 });
 
@@ -142,7 +142,7 @@ impl Controller {
                                 panel_tabs.set_selected(true);
                             }
                         }
-                        PanelState::TorrentInfo(_) => {
+                        PanelState::TorrentDesc(_) => {
                             if key.code == KeyCode::Esc || key.code == KeyCode::Left {
                                 self.panel_state = PanelState::Hidden;
                                 torrent_list.set_selected(true);
@@ -161,7 +161,7 @@ impl Controller {
                                 torrent_list.set_selected(true);
                                 panel_tabs.set_selected(false);
                             } else if key.code == KeyCode::Left {
-                                self.panel_state = PanelState::TorrentInfo(TorrentInfo {
+                                self.panel_state = PanelState::TorrentDesc(TorrentDesc {
                                     md: self.md.clone(),
                                 });
                                 panel_tabs.set_tab(0);
@@ -229,7 +229,7 @@ pub(crate) async fn run_controller_task(mut controller_task: Controller) {
 
 enum PanelState {
     Hidden,
-    TorrentInfo(TorrentInfo),
+    TorrentDesc(TorrentDesc),
     PiecesInfo(PiecesInfo),
     MapInfo(MapInfo),
 }

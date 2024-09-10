@@ -53,8 +53,8 @@ impl Strategy {
                     self.endgame_mode = prog.iter().zip(down.iter()).all(|(&a, &b)| a || b);
                 }
             }
-            AdminMessage::PeerDisconnect(req) => {
-                println!("{0} disconnected", req.addr);
+            AdminMessage::PeerDisconnect(_req) => {
+                //println!("{0} disconnected", req.addr);
             }
         }
         return Ok(());

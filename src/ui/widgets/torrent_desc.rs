@@ -9,11 +9,11 @@ use ratatui::{
 
 use crate::{parser::metadata::Metadata, ui::Draw};
 
-pub(crate) struct TorrentInfo {
+pub(crate) struct TorrentDesc {
     pub(crate) md: Arc<Metadata>,
 }
 
-impl Draw for TorrentInfo {
+impl Draw for TorrentDesc {
     fn draw<B: Backend>(&mut self, f: &mut Frame<B>, area: Rect) {
         let lines = vec![
             Line::from(format!("Name: {}", self.md.info.name)),
