@@ -11,7 +11,7 @@ use builder::file_builder;
 use client::manager::run_peer_manager_task;
 use tokio::{self, sync::watch};
 
-use torrent_info::{tracker_acquirer::TrackerAcquirer, TorrentInfo, TorrentInfoAcquirer};
+use torrent_info::{magnet_acquirer::MagnetAcquirer, tracker_acquirer::TrackerAcquirer, TorrentInfo, TorrentInfoAcquirer};
 
 use crate::{
     client::manager::Manager,
@@ -20,18 +20,23 @@ use crate::{
 
 /*
     TODO FOR NEXT TIME:
-    [x] Finish writing handle_message in piece_strategy
-    [x] Figure out downloaded/prog vectors
-    [x] Simplify manager
-
+    [x] Parse ping response into ip/port - does it send on connect or on ping?
+    [ ] Implement node hash calculation
+    [ ] Write other magnet messages
+    [x] Try pinging some other nodes
+    [ ] Start implementing protocol
 */
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let torrent_file = String::from("torrents/airfryer.torrent");
     let output_dir = String::from("downloads");
 
-    let acquirer = TrackerAcquirer {};
-    let (md, peers) = match acquirer.acquire(torrent_file).await? {
+    let magnet_acquirer = MagnetAcquirer::new();
+    magnet_acquirer.acquire(torrent_file.clone()).await?;
+
+
+    let info_acquirer = TrackerAcquirer {};
+    let (md, peers) = match info_acquirer.acquire(torrent_file).await? {
         TorrentInfo { md, peers } => (Arc::new(md), Arc::new(peers)),
     };
 
