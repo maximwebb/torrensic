@@ -2,7 +2,7 @@ use std::net::Ipv4Addr;
 
 use bendy::{
     decoding::{Error as DecError, FromBencode},
-    encoding::ToBencode,
+    encoding::{SingleItemEncoder, ToBencode},
 };
 use byteorder::{BigEndian, ReadBytesExt};
 
@@ -37,7 +37,7 @@ impl<T: MagnetTopic + ToBencode + Clone> ToBencode for MagnetMessage<T> {
 
 #[derive(Clone)]
 pub(crate) struct Ping {
-    pub id: String,
+    pub id: Vec<u8>,
 }
 
 impl MagnetTopic for Ping {
@@ -47,13 +47,16 @@ impl MagnetTopic for Ping {
 }
 
 impl ToBencode for Ping {
-    const MAX_DEPTH: usize = 1;
+    const MAX_DEPTH: usize = 2;
 
     fn encode(
         &self,
         encoder: bendy::encoding::SingleItemEncoder,
     ) -> Result<(), bendy::encoding::Error> {
-        encoder.emit_dict(|mut e| e.emit_pair(b"id", self.id.clone()))?;
+        encoder.emit_dict(|mut e| {
+            e.emit_pair_with(b"id", |e| e.emit_bytes(&self.id))?;
+            Ok(())
+        })?;
 
         Ok(())
     }
@@ -64,7 +67,7 @@ impl ToBencode for Ping {
 
 #[derive(Clone)]
 pub(crate) struct Endpoint {
-    pub ip: Ipv4Addr,
+    pub ip: u32,
     pub port: u16,
 }
 
@@ -97,6 +100,6 @@ impl FromBencode for Endpoint {
         }
         let ip = ip.ok_or_else(|| DecError::missing_field("ip"))?;
         let port = port.ok_or_else(|| DecError::missing_field("port"))?;
-        Ok(Endpoint { ip: Ipv4Addr::from(ip), port })
+        Ok(Endpoint { ip, port })
     }
 }
