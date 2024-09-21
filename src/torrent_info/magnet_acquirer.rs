@@ -1,15 +1,21 @@
-use std::{net::{Ipv4Addr, SocketAddr}, time::Duration, };
+use std::{
+    net::{Ipv4Addr, SocketAddrV4},
+    time::Duration,
+};
 
 use bendy::{decoding::FromBencode, encoding::ToBencode};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use tokio::{net::UdpSocket, time::timeout};
 
-use crate::{client::ProtocolError::TorrentInfoAcquireFailed, parser::magnet_message::{Endpoint, MagnetMessage, Ping}};
+use crate::{
+    client::ProtocolError::TorrentInfoAcquireFailed,
+    parser::magnet_message::{Endpoint, GetPeers, GetPeersResponse, MagnetMessage, Ping},
+};
 
 use super::TorrentInfoAcquirer;
 
 pub(crate) struct MagnetAcquirer {
-    bootstrap_nodes: Vec<SocketAddr>,
+    bootstrap_nodes: Vec<SocketAddrV4>,
 }
 
 impl MagnetAcquirer {
@@ -201,11 +207,10 @@ impl MagnetAcquirer {
         };
     }
 
-    // TODO: separate out into magnet_link
-    fn parse_info_hash(link: &str) -> Option<String> {
-        if !link.starts_with("magnet:?")
-        {
-            return None
+    // TODO: separate out into MagnetLink struct
+    fn parse_info_hash(link: &str) -> Option<Vec<u8>> {
+        if !link.starts_with("magnet:?") {
+            return None;
         }
 
         let pairs = link[8..].split('&');
@@ -213,25 +218,71 @@ impl MagnetAcquirer {
         for pair in pairs {
             let mut splitter = pair.splitn(2, '=');
             if splitter.next().unwrap() != "xt" {
-                continue
+                continue;
             }
 
             let v = splitter.next().unwrap();
             if !v.starts_with("urn:btih:") {
                 println!("Error: got unexpected value for xt in magnet link: {}", v);
-                continue
+                continue;
             }
 
             let info_hash = v[9..].to_string();
 
-            if info_hash.len() != 20 {
-                println!("Error: got unexpected info hash length in magnet link: {}", info_hash);
+            if info_hash.len() != 40 {
+                println!(
+                    "Error: got unexpected info hash length in magnet link: {}",
+                    info_hash
+                );
+                continue;
             }
 
-            return Some(info_hash)
+            let info_hash = hex::decode(info_hash).expect("Error: Invalid info hash");
+            return Some(info_hash);
         }
 
-        return None
+        return None;
+    }
+
+    async fn make_req(
+        msg_bytes: &Vec<u8>,
+        addr: &SocketAddrV4,
+    ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
+        let socket = UdpSocket::bind("0.0.0.0:3000").await?;
+
+        match socket.connect(addr).await {
+            Ok(_) => {}
+            Err(e) => {
+                println!("Got error during connection: {e}");
+                return Ok(None);
+            }
+        };
+
+        let _len = match socket.send(&msg_bytes).await {
+            Ok(_len) => _len,
+            Err(e) => {
+                println!("Got error while sending: {e}");
+                return Ok(None);
+            }
+        };
+
+        let mut buf = [0; 4096];
+        let resp = socket.recv(&mut buf);
+
+        let len = match timeout(Duration::from_millis(500), resp).await {
+            Err(_) => {
+                // println!("Timeout when attempting to perform UDP tracker handshake with {addr} after 500ms");
+                return Ok(None);
+            }
+            Ok(fut) => match fut {
+                Ok(len) => len,
+                Err(e) => {
+                    println!("Got error while receiving: {e}");
+                    return Ok(None);
+                }
+            },
+        };
+        Ok(Some(buf[..len].to_vec()))
     }
 
     async fn acquire_node_hash(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
@@ -251,56 +302,83 @@ impl MagnetAcquirer {
 
             let ip = match Endpoint::from_bencode(&resp_bytes) {
                 Ok(v) => {
-                    println!("Got endpoint: {:?}:{:?} from peer: {:?}", Ipv4Addr::from(v.ip), v.port, addr);
+                    println!(
+                        "Got endpoint: {:?}:{:?} from peer: {:?}",
+                        Ipv4Addr::from(v.ip),
+                        v.port,
+                        addr
+                    );
                     v.ip
                 }
                 Err(e) => {
                     println!("Got error: {e}");
-                    continue
+                    continue;
                 }
             };
 
-            return Ok(Self::compute_node_id(ip))
+            return Ok(Self::compute_node_id(ip));
         }
-        Err(Box::new(TorrentInfoAcquireFailed("Could not determine our node ID from bootstrap nodes".to_owned())))
+        Err(Box::new(TorrentInfoAcquireFailed(
+            "Could not determine our node ID from bootstrap nodes".to_owned(),
+        )))
     }
 
-    async fn make_req(msg_bytes: &Vec<u8>, addr: &SocketAddr) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
-        let socket = UdpSocket::bind("0.0.0.0:3000").await?;
+    async fn acquire_peers(
+        &self,
+        id: Vec<u8>,
+        info_hash: Vec<u8>,
+    ) -> Result<Vec<SocketAddrV4>, Box<dyn std::error::Error>> {
+        let mut nodes = self.bootstrap_nodes.clone();
+        let mut it_count = 0;
 
-        match socket.connect(addr).await {
-            Ok(_) => {}
-            Err(e) => {
-                println!("Got error during connection: {e}");
-                return Ok(None)
-            }
-        };
-
-        let _len = match socket.send(&msg_bytes).await {
-            Ok(_len) => _len,
-            Err(e) => {
-                println!("Got error while sending: {e}");
-                return Ok(None)
-            }
-        };
-
-        let mut buf = [0; 128];
-        let resp = socket.recv(&mut buf);
-
-        let len = match timeout(Duration::from_millis(2000), resp).await {
-            Err(_) => {
-                println!("Timeout when attempting to perform UDP tracker handshake with {addr} after 2000ms");
-                return Ok(None)
-            }
-            Ok(fut) => match fut {
-                Ok(len) => len,
-                Err(e) => {
-                    println!("Got error while receiving: {e}");
-                    return Ok(None)
-                }
+        let get_peers = MagnetMessage::<GetPeers> {
+            payload: GetPeers {
+                id,
+                info_hash: info_hash.clone(),
             },
         };
-        Ok(Some(buf[..len].to_vec()))
+        let get_peers = get_peers.to_bencode().unwrap();
+
+        loop {
+            it_count += 1;
+            println!("Performing iteration #{it_count} of acquiring peers...");
+
+            let mut updated_nodes = false;
+
+            while let Some(addr) = nodes.pop() {
+                let resp = Self::make_req(&get_peers, &addr).await?;
+                let resp = match resp {
+                    Some(v) => v,
+                    None => continue,
+                };
+
+                let mut resp = match MagnetMessage::<GetPeersResponse>::from_bencode(&resp) {
+                    Ok(v) => v.payload,
+                    Err(e) => {
+                        println!("Error parsing response: {}", e.to_string());
+                        continue;
+                    }
+                };
+
+                if resp.found_peers {
+                    return Ok(resp.endpoints);
+                } else {
+                    println!(
+                        "Got node endpoints (xor distance: {})",
+                        Self::compute_xor_distance(&info_hash, &resp.id)
+                    );
+                    updated_nodes = true;
+                    nodes.append(&mut resp.endpoints);
+                    break;
+                }
+            }
+
+            if !updated_nodes {
+                return Err(Box::new(TorrentInfoAcquireFailed(
+                    "Failed to acquire peers from DHT".to_owned(),
+                )));
+            }
+        }
     }
 
     fn compute_node_id(ip: u32) -> Vec<u8> {
@@ -319,6 +397,18 @@ impl MagnetAcquirer {
 
         node_id
     }
+
+    fn compute_xor_distance(x: &Vec<u8>, y: &Vec<u8>) -> String {
+        if x.len() != y.len() {
+            println!("Error: mismatched sizes (x: {}, y: {})", x.len(), y.len());
+        }
+
+        x.iter()
+            .zip(y.iter())
+            .map(|(a, b)| format!("{:08b}", a ^ b))
+            .collect::<Vec<String>>()
+            .join("_")
+    }
 }
 
 impl TorrentInfoAcquirer for MagnetAcquirer {
@@ -326,29 +416,27 @@ impl TorrentInfoAcquirer for MagnetAcquirer {
         &self,
         torrent: String,
     ) -> Result<super::TorrentInfo, Box<dyn std::error::Error>> {
-        let node_hash = Self::parse_info_hash(&torrent);
-        let node_id = self.acquire_node_hash().await?;
-
-        let ping = MagnetMessage::<Ping> {
-            payload: Ping{ id: node_id },
-        };
-        let ping_bytes = ping.to_bencode().unwrap();
-
-        for addr in &self.bootstrap_nodes {
-
-            let res = Self::make_req(&ping_bytes, &addr).await?;
-            match res {
-                Some(v) => println!("{}", String::from_utf8_lossy(&v)),
-                None => continue,
+        let id = self.acquire_node_hash().await?;
+        let info_hash = match Self::parse_info_hash(&torrent) {
+            Some(v) => v,
+            None => {
+                return Err(Box::new(TorrentInfoAcquireFailed(
+                    "Failed to parse magnet link".to_owned(),
+                )))
             }
+        };
 
-        }
+        let peers = self.acquire_peers(id, info_hash).await?;
 
-        
+        println!(
+            "Got peers!: {}",
+            peers
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<String>>()
+                .join(", ")
+        );
+
         todo!()
     }
-
-    
 }
-
-//d2:ip6: [148, 252, 141, 200 : 247, 4]
