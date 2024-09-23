@@ -6,6 +6,8 @@ use bendy::{
 };
 use byteorder::{BigEndian, ReadBytesExt};
 
+use crate::utils;
+
 pub(crate) trait MagnetTopic {
     fn topic() -> String;
 }
@@ -148,15 +150,10 @@ impl FromBencode for GetPeersResponse {
                     let raw = val.try_into_bytes()?;
                     let len = (raw.len() / 6) * 6;
 
-                    // TODO: write parsing utility for IP/port
                     let res = raw[..len]
                         .chunks_exact(6)
                         .map(|c| {
-                            let mut ip_raw = &c[..4];
-                            let mut port_raw = &c[4..6];
-                            let ip = ip_raw.read_u32::<BigEndian>().unwrap();
-                            let port = port_raw.read_u16::<BigEndian>().unwrap();
-                            SocketAddrV4::new(Ipv4Addr::from_bits(ip), port)
+                            utils::addr_from_bytes(c).unwrap()
                         })
                         .collect::<Vec<SocketAddrV4>>();
                     nodes = res;
@@ -166,11 +163,7 @@ impl FromBencode for GetPeersResponse {
 
                     while let Some(item) = list.next_object()? {
                         if let bendy::decoding::Object::Bytes(raw) = item {
-                            let mut ip_raw = &raw[..4];
-                            let mut port_raw = &raw[4..6];
-                            let ip = ip_raw.read_u32::<BigEndian>().unwrap();
-                            let port = port_raw.read_u16::<BigEndian>().unwrap();
-                            peers.push(SocketAddrV4::new(Ipv4Addr::from_bits(ip), port));
+                            peers.push(utils::addr_from_bytes(raw).unwrap());
                         } else {
                             continue;
                         }
