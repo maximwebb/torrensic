@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     net::{Ipv4Addr, SocketAddrV4},
     time::Duration,
 };
@@ -292,8 +293,6 @@ impl MagnetAcquirer {
         };
         let ping_bytes = ping.to_bencode().unwrap();
 
-        println!("{}", String::from_utf8_lossy(&ping_bytes));
-
         for addr in &self.bootstrap_nodes {
             let resp_bytes = match Self::make_req(&ping_bytes, addr).await? {
                 Some(v) => v,
@@ -303,7 +302,7 @@ impl MagnetAcquirer {
             let ip = match Endpoint::from_bencode(&resp_bytes) {
                 Ok(v) => {
                     println!(
-                        "Got endpoint: {:?}:{:?} from peer: {:?}",
+                        "Got own endpoint: {:?}:{:?} from peer: {:?}",
                         Ipv4Addr::from(v.ip),
                         v.port,
                         addr
@@ -327,9 +326,11 @@ impl MagnetAcquirer {
         &self,
         id: Vec<u8>,
         info_hash: Vec<u8>,
-    ) -> Result<Vec<SocketAddrV4>, Box<dyn std::error::Error>> {
-        let mut nodes = self.bootstrap_nodes.clone();
-        let mut it_count = 0;
+    ) -> Result<HashSet<SocketAddrV4>, Box<dyn std::error::Error>> {
+        let mut unvisited_nodes = self.bootstrap_nodes.clone();
+        let mut visited_nodes = HashSet::<SocketAddrV4>::new();
+        let mut peers = HashSet::<SocketAddrV4>::new();
+        let max_peers = 100;
 
         let get_peers = MagnetMessage::<GetPeers> {
             payload: GetPeers {
@@ -337,48 +338,61 @@ impl MagnetAcquirer {
                 info_hash: info_hash.clone(),
             },
         };
-        let get_peers = get_peers.to_bencode().unwrap();
+        let get_peers_bytes = get_peers.to_bencode().unwrap();
 
-        loop {
-            it_count += 1;
-            println!("Performing iteration #{it_count} of acquiring peers...");
+        while let Some(addr) = unvisited_nodes.pop() {
+            visited_nodes.insert(addr);
+            let resp = Self::make_req(&get_peers_bytes, &addr).await?;
+            let resp = match resp {
+                Some(v) => v,
+                None => continue,
+            };
 
-            let mut updated_nodes = false;
+            let resp = match MagnetMessage::<GetPeersResponse>::from_bencode(&resp) {
+                Ok(v) => v.payload,
+                Err(e) => {
+                    println!("Error parsing response: {}", e.to_string());
+                    continue;
+                }
+            };
 
-            while let Some(addr) = nodes.pop() {
-                let resp = Self::make_req(&get_peers, &addr).await?;
-                let resp = match resp {
-                    Some(v) => v,
-                    None => continue,
-                };
+            if !resp.peers.is_empty() {
+                let endpoints = HashSet::<SocketAddrV4>::from_iter(resp.peers);
+                let endpoints: HashSet<_> = endpoints.difference(&peers).cloned().collect();
+                println!(
+                    "Got {} new peer endpoints (total: {})",
+                    endpoints.len(),
+                    endpoints.len() + peers.len()
+                );
+                peers.extend(endpoints);
 
-                let mut resp = match MagnetMessage::<GetPeersResponse>::from_bencode(&resp) {
-                    Ok(v) => v.payload,
-                    Err(e) => {
-                        println!("Error parsing response: {}", e.to_string());
-                        continue;
-                    }
-                };
-
-                if resp.found_peers {
-                    return Ok(resp.endpoints);
-                } else {
-                    println!(
-                        "Got node endpoints (xor distance: {})",
-                        Self::compute_xor_distance(&info_hash, &resp.id)
-                    );
-                    updated_nodes = true;
-                    nodes.append(&mut resp.endpoints);
+                if peers.len() >= max_peers {
                     break;
                 }
             }
-
-            if !updated_nodes {
-                return Err(Box::new(TorrentInfoAcquireFailed(
-                    "Failed to acquire peers from DHT".to_owned(),
-                )));
+            if !resp.nodes.is_empty() {
+                let pre_len = unvisited_nodes.len();
+                for node in resp.nodes {
+                    if !visited_nodes.contains(&node) {
+                        unvisited_nodes.push(node);
+                    }
+                }
+                println!(
+                    "Got {} new node endpoints (total: {}, xor distance: {})",
+                    unvisited_nodes.len() - pre_len,
+                    unvisited_nodes.len(),
+                    Self::compute_xor_distance(&info_hash, &resp.id)
+                );
             }
         }
+
+        if peers.is_empty() {
+            return Err(Box::new(TorrentInfoAcquireFailed(
+                "Failed to acquire peers from DHT".to_owned(),
+            )));
+        }
+
+        Ok(peers)
     }
 
     fn compute_node_id(ip: u32) -> Vec<u8> {
@@ -398,16 +412,17 @@ impl MagnetAcquirer {
         node_id
     }
 
-    fn compute_xor_distance(x: &Vec<u8>, y: &Vec<u8>) -> String {
+    fn compute_xor_distance(x: &Vec<u8>, y: &Vec<u8>) -> f32 {
         if x.len() != y.len() {
             println!("Error: mismatched sizes (x: {}, y: {})", x.len(), y.len());
         }
 
-        x.iter()
-            .zip(y.iter())
-            .map(|(a, b)| format!("{:08b}", a ^ b))
-            .collect::<Vec<String>>()
-            .join("_")
+        let mut res = 0;
+
+        for v in x.iter().zip(y.iter()).map(|(a, b)| a ^ b) {
+            res += if v == 0 { 8 } else { v.leading_zeros() }
+        }
+        return 100.0 - res as f32 / 1.6;
     }
 }
 

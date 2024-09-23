@@ -119,13 +119,11 @@ impl ToBencode for GetPeers {
     }
 }
 
-// GetPeersResponse may either contain nodes or peer addresses - use endpoints field for both, and indicate which type with found_peers flag
-
 #[derive(Clone)]
 pub(crate) struct GetPeersResponse {
     pub id: Vec<u8>,
-    pub endpoints: Vec<SocketAddrV4>,
-    pub found_peers: bool,
+    pub nodes: Vec<SocketAddrV4>,
+    pub peers: Vec<SocketAddrV4>,
 }
 
 impl FromBencode for GetPeersResponse {
@@ -136,8 +134,8 @@ impl FromBencode for GetPeersResponse {
         Self: Sized,
     {
         let mut id: Option<Vec<u8>> = None;
-        let mut endpoints: Option<Vec<SocketAddrV4>> = None;
-        let mut found_peers = false;
+        let mut nodes = Vec::<SocketAddrV4>::new();
+        let mut peers = Vec::<SocketAddrV4>::new();
 
         let mut dict = object.try_into_dictionary()?;
         while let Some(pair) = dict.next_pair()? {
@@ -147,10 +145,6 @@ impl FromBencode for GetPeersResponse {
                     id = Some(raw.to_vec());
                 }
                 (b"nodes", val) => {
-                    if found_peers {
-                        continue;
-                    }
-
                     let raw = val.try_into_bytes()?;
                     let len = (raw.len() / 6) * 6;
 
@@ -165,11 +159,10 @@ impl FromBencode for GetPeersResponse {
                             SocketAddrV4::new(Ipv4Addr::from_bits(ip), port)
                         })
                         .collect::<Vec<SocketAddrV4>>();
-                    endpoints = Some(res);
+                    nodes = res;
                 }
                 (b"values", val) => {
                     let mut list = val.try_into_list()?;
-                    let mut res: Vec<SocketAddrV4> = Vec::new();
 
                     while let Some(item) = list.next_object()? {
                         if let bendy::decoding::Object::Bytes(raw) = item {
@@ -177,14 +170,11 @@ impl FromBencode for GetPeersResponse {
                             let mut port_raw = &raw[4..6];
                             let ip = ip_raw.read_u32::<BigEndian>().unwrap();
                             let port = port_raw.read_u16::<BigEndian>().unwrap();
-                            res.push(SocketAddrV4::new(Ipv4Addr::from_bits(ip), port));
+                            peers.push(SocketAddrV4::new(Ipv4Addr::from_bits(ip), port));
                         } else {
                             continue;
                         }
                     }
-
-                    found_peers = true;
-                    endpoints = Some(res);
                 }
                 _ => {
                     continue;
@@ -193,11 +183,15 @@ impl FromBencode for GetPeersResponse {
         }
 
         let id = id.ok_or_else(|| DecError::missing_field("id"))?;
-        let endpoints = endpoints.ok_or_else(|| DecError::missing_field("endpoints"))?;
+        if nodes.len() == 0 && peers.len() == 0
+        {
+            return Err(DecError::missing_field("endpoints"));
+        }
+
         Ok(GetPeersResponse {
             id,
-            endpoints,
-            found_peers,
+            nodes,
+            peers
         })
     }
 }
