@@ -1,12 +1,14 @@
+mod peer_acquirer;
+mod admin_message;
+
+use core::num;
 use std::{
-    collections::HashSet,
-    net::{Ipv4Addr, SocketAddrV4},
-    time::Duration,
+    collections::HashSet, net::{Ipv4Addr, SocketAddrV4}, sync::Arc, time::Duration
 };
 
 use bendy::{decoding::FromBencode, encoding::ToBencode};
 use rand::{rngs::StdRng, Rng, SeedableRng};
-use tokio::{net::UdpSocket, time::timeout};
+use tokio::{net::UdpSocket, sync::mpsc, time::timeout};
 
 use crate::{
     client::ProtocolError::TorrentInfoAcquireFailed,
@@ -14,6 +16,47 @@ use crate::{
 };
 
 use super::TorrentInfoAcquirer;
+
+async fn make_req(
+    msg_bytes: &Vec<u8>,
+    addr: &SocketAddrV4,
+) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
+    let socket = UdpSocket::bind("0.0.0.0:0").await?;
+
+    match socket.connect(addr).await {
+        Ok(_) => {}
+        Err(e) => {
+            println!("Got error during connection: {e}");
+            return Ok(None);
+        }
+    };
+
+    let _len = match socket.send(&msg_bytes).await {
+        Ok(_len) => _len,
+        Err(e) => {
+            println!("Got error while sending: {e}");
+            return Ok(None);
+        }
+    };
+
+    let mut buf = [0; 4096];
+    let resp = socket.recv(&mut buf);
+
+    let len = match timeout(Duration::from_millis(500), resp).await {
+        Err(_) => {
+            // println!("Timeout when attempting to perform UDP tracker handshake with {addr} after 500ms");
+            return Ok(None);
+        }
+        Ok(fut) => match fut {
+            Ok(len) => len,
+            Err(e) => {
+                println!("Got error while receiving: {e}");
+                return Ok(None);
+            }
+        },
+    };
+    Ok(Some(buf[..len].to_vec()))
+}
 
 pub(crate) struct MagnetAcquirer {
     bootstrap_nodes: Vec<SocketAddrV4>,
@@ -190,17 +233,6 @@ impl MagnetAcquirer {
         ];
 
         return MagnetAcquirer {
-            // bootstrap_peers: endpoints
-            //     .into_iter()
-            //     .map(|endpoint| {
-            //         let parts: Vec<&str> = endpoint.split(':').collect();
-            //         PeerInfo {
-            //             ip: parts[0].to_string(),
-            //             port: parts[1].parse().unwrap_or(0),
-            //             peer_id: None,
-            //         }
-            //     })
-            //     .collect(),
             bootstrap_nodes: endpoints
                 .into_iter()
                 .map(|endpoint| endpoint.parse().unwrap())
@@ -245,47 +277,6 @@ impl MagnetAcquirer {
         return None;
     }
 
-    async fn make_req(
-        msg_bytes: &Vec<u8>,
-        addr: &SocketAddrV4,
-    ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
-        let socket = UdpSocket::bind("0.0.0.0:3000").await?;
-
-        match socket.connect(addr).await {
-            Ok(_) => {}
-            Err(e) => {
-                println!("Got error during connection: {e}");
-                return Ok(None);
-            }
-        };
-
-        let _len = match socket.send(&msg_bytes).await {
-            Ok(_len) => _len,
-            Err(e) => {
-                println!("Got error while sending: {e}");
-                return Ok(None);
-            }
-        };
-
-        let mut buf = [0; 4096];
-        let resp = socket.recv(&mut buf);
-
-        let len = match timeout(Duration::from_millis(500), resp).await {
-            Err(_) => {
-                // println!("Timeout when attempting to perform UDP tracker handshake with {addr} after 500ms");
-                return Ok(None);
-            }
-            Ok(fut) => match fut {
-                Ok(len) => len,
-                Err(e) => {
-                    println!("Got error while receiving: {e}");
-                    return Ok(None);
-                }
-            },
-        };
-        Ok(Some(buf[..len].to_vec()))
-    }
-
     async fn acquire_node_hash(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let id = String::from("abcdefghij0123456789");
         let ping = MagnetMessage::<Ping> {
@@ -294,7 +285,7 @@ impl MagnetAcquirer {
         let ping_bytes = ping.to_bencode().unwrap();
 
         for addr in &self.bootstrap_nodes {
-            let resp_bytes = match Self::make_req(&ping_bytes, addr).await? {
+            let resp_bytes = match make_req(&ping_bytes, addr).await? {
                 Some(v) => v,
                 None => continue,
             };
@@ -327,62 +318,78 @@ impl MagnetAcquirer {
         id: Vec<u8>,
         info_hash: Vec<u8>,
     ) -> Result<HashSet<SocketAddrV4>, Box<dyn std::error::Error>> {
+        // TODO: Make this a priority queue
         let mut unvisited_nodes = self.bootstrap_nodes.clone();
         let mut visited_nodes = HashSet::<SocketAddrV4>::new();
         let mut peers = HashSet::<SocketAddrV4>::new();
         let max_peers = 100;
+        let num_workers = 5;
 
+        let (tx_admin_message, mut rx_admin_message) = mpsc::channel(128);
+        
         let get_peers = MagnetMessage::<GetPeers> {
             payload: GetPeers {
                 id,
                 info_hash: info_hash.clone(),
             },
         };
-        let get_peers_bytes = get_peers.to_bencode().unwrap();
+        let get_peers_bytes = Arc::new(get_peers.to_bencode().unwrap());
 
-        while let Some(addr) = unvisited_nodes.pop() {
-            visited_nodes.insert(addr);
-            let resp = Self::make_req(&get_peers_bytes, &addr).await?;
-            let resp = match resp {
-                Some(v) => v,
-                None => continue,
-            };
-
-            let resp = match MagnetMessage::<GetPeersResponse>::from_bencode(&resp) {
-                Ok(v) => v.payload,
+        for _ in 0..num_workers {
+            let bytes = get_peers_bytes.clone();
+            let tx = tx_admin_message.clone();
+            tokio::spawn(async { match peer_acquirer::run(bytes, tx).await {
+                Ok(_) => {},
                 Err(e) => {
-                    println!("Error parsing response: {}", e.to_string());
-                    continue;
-                }
-            };
+                    println!("Got err: {}", e);
+                },
+            } });
+        }
 
-            if !resp.peers.is_empty() {
-                let endpoints = HashSet::<SocketAddrV4>::from_iter(resp.peers);
-                let endpoints: HashSet<_> = endpoints.difference(&peers).cloned().collect();
-                println!(
-                    "Got {} new peer endpoints (total: {})",
-                    endpoints.len(),
-                    endpoints.len() + peers.len()
-                );
-                peers.extend(endpoints);
-
-                if peers.len() >= max_peers {
-                    break;
-                }
-            }
-            if !resp.nodes.is_empty() {
-                let pre_len = unvisited_nodes.len();
-                for node in resp.nodes {
-                    if !visited_nodes.contains(&node) {
-                        unvisited_nodes.push(node);
+        loop {
+            tokio::select! {
+                admin_message = rx_admin_message.recv() => {
+                    match admin_message.expect("Error receiving message") {
+                        admin_message::AdminMessage::NodeAddressRequest(req) => {
+                            let addr = unvisited_nodes.pop();
+                            if let Some(v) = addr {
+                                visited_nodes.insert(v);
+                            }
+                            let _ = req.chan.send(addr);
+                        },
+                        admin_message::AdminMessage::AddressList(req) => {
+                            if !req.peers.is_empty() {
+                                let endpoints = HashSet::<SocketAddrV4>::from_iter(req.peers);
+                                let endpoints: HashSet<_> = endpoints.difference(&peers).cloned().collect();
+                                println!(
+                                    "Got {} new peer endpoints (total: {})",
+                                    endpoints.len(),
+                                    endpoints.len() + peers.len()
+                                );
+                                peers.extend(endpoints);
+                        
+                                if peers.len() >= max_peers {
+                                    break;
+                                }
+                            }
+                            if !req.nodes.is_empty() {
+                                let pre_len = unvisited_nodes.len();
+                                for node in req.nodes {
+                                    if !visited_nodes.contains(&node) {
+                                        unvisited_nodes.push(node);
+                                    }
+                                }
+                                println!(
+                                    "Got {} new node endpoints (total: {}, xor distance: {})",
+                                    unvisited_nodes.len() - pre_len,
+                                    unvisited_nodes.len(),
+                                    Self::compute_xor_distance(&info_hash, &req.id)
+                                );
+                            }
+                            let _ = req.ack.send(());
+                        },
                     }
                 }
-                println!(
-                    "Got {} new node endpoints (total: {}, xor distance: {})",
-                    unvisited_nodes.len() - pre_len,
-                    unvisited_nodes.len(),
-                    Self::compute_xor_distance(&info_hash, &resp.id)
-                );
             }
         }
 
