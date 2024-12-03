@@ -1,12 +1,15 @@
 use std::net::{Ipv4Addr, SocketAddrV4};
 
 use bendy::{
-    decoding::{Error as DecError, FromBencode},
+    decoding::{Error as DecError, FromBencode, ResultExt},
     encoding::{SingleItemEncoder, ToBencode},
 };
 use byteorder::{BigEndian, ReadBytesExt};
 
-use crate::utils;
+use crate::{
+    client::peer_handler::connection::{Deserialisable, Serialisable},
+    log, log_err, utils,
+};
 
 pub(crate) trait MagnetTopic {
     fn topic() -> String;
@@ -52,9 +55,7 @@ impl<T: FromBencode + Clone> FromBencode for MagnetMessage<T> {
                     let raw = val.try_into_dictionary()?.into_raw()?;
                     payload = T::from_bencode(raw).ok();
                 }
-                _ => {
-                    continue;
-                }
+                _ => continue,
             }
         }
         let payload = payload.ok_or_else(|| DecError::missing_field("r"))?;
@@ -152,9 +153,7 @@ impl FromBencode for GetPeersResponse {
 
                     let res = raw[..len]
                         .chunks_exact(6)
-                        .map(|c| {
-                            utils::addr_from_bytes(c).unwrap()
-                        })
+                        .map(|c| utils::addr_from_bytes(c).unwrap())
                         .collect::<Vec<SocketAddrV4>>();
                     nodes = res;
                 }
@@ -169,23 +168,16 @@ impl FromBencode for GetPeersResponse {
                         }
                     }
                 }
-                _ => {
-                    continue;
-                }
+                _ => continue,
             }
         }
 
         let id = id.ok_or_else(|| DecError::missing_field("id"))?;
-        if nodes.len() == 0 && peers.len() == 0
-        {
+        if nodes.len() == 0 && peers.len() == 0 {
             return Err(DecError::missing_field("endpoints"));
         }
 
-        Ok(GetPeersResponse {
-            id,
-            nodes,
-            peers
-        })
+        Ok(GetPeersResponse { id, nodes, peers })
     }
 }
 
@@ -220,13 +212,370 @@ impl FromBencode for Endpoint {
                     ip = Some(ip_raw.read_u32::<BigEndian>()?);
                     port = Some(port_raw.read_u16::<BigEndian>()?);
                 }
-                _ => {
-                    continue;
-                }
+                _ => continue,
             }
         }
         let ip = ip.ok_or_else(|| DecError::missing_field("ip"))?;
         let port = port.ok_or_else(|| DecError::missing_field("port"))?;
         Ok(Endpoint { ip, port })
+    }
+}
+
+////////////////////////
+// Metadata Protocol
+
+#[derive(PartialEq, Debug)]
+pub enum MetadataMessage {
+    MetadataHandshake(MetadataHandshake),
+    MetadataRequest(MetadataRequest),
+    MetadataResponse(MetadataResponse),
+}
+
+impl Serialisable for MetadataMessage {
+    fn serialise(&self) -> Vec<u8> {
+        return match &self {
+            MetadataMessage::MetadataHandshake(v) => {
+                let payload = v.to_bencode().unwrap();
+                let len: u32 = (payload.len() + 2).try_into().unwrap();
+                let len_prefix = len.to_be_bytes().to_vec();
+
+                let id: u8 = 20;
+
+                return [len_prefix, vec![id, 0], payload].concat();
+            }
+            MetadataMessage::MetadataRequest(v) => v.to_bencode().unwrap(),
+            MetadataMessage::MetadataResponse(v) => {
+                let mut msg = v.to_bencode().unwrap();
+                msg.extend(&v.data);
+                msg
+            }
+        };
+    }
+}
+
+/*
+[0, 0, 0, 213, 20, 0, 100, 49, 50, 58, 99, 111, 109, 112, 108, 101, 116, 101, 95, 97, 103, 111, 105, 49, 49, 54, 101, 49, 58,
+ 109, 100, 49, 49, 58, 108, 116, 95, 100, 111, 110, 116, 104, 97, 118, 101, 105, 55, 101, 49, 48, 58, 115, 104, 97, 114, 101,
+ 95, 109, 111, 100, 101, 105, 56, 101, 49, 49, 58, 117, 112, 108, 111, 97, 100, 95, 111, 110, 108, 121, 105, 51, 101, 49, 50,
+ 58, 117, 116, 95, 104, 111, 108, 101, 112, 117, 110, 99, 104, 105, 52, 101, 49, 49, 58, 117, 116, 95, 109, 101, 116, 97, 100,
+ 97, 116, 97, 105, 50, 101, 54, 58, 117, 116, 95, 112, 101, 120, 105, 49, 101, 101, 49, 51, 58, 109, 101, 116, 97, 100, 97, 116,
+ 97, 95, 115, 105, 122, 101, 105, 50, 52, 51, 48, 54, 101, 52, 58, 114, 101, 113, 113, 105, 53, 48, 48, 101, 49, 49, 58, 117,
+ 112, 108, 111, 97, 100, 95, 111, 110, 108, 121, 105, 49, 101, 49, 58, 118, 49, 55, 58, 113, 66, 105, 116, 116, 111, 114, 114,
+ 101, 110, 116, 47, 52, 46, 54, 46, 51, 54, 58, 121, 111, 117, 114, 105, 112, 52, 58, 80, 1, 160, 54, 101, 0, 0, 0, 149, 5, 255,
+ 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+ 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+ 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+ 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+ 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+ 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 224]
+*/
+
+impl Deserialisable for MetadataMessage {
+    fn deserialise(raw: &Vec<u8>) -> Result<(Option<Self>, Vec<u8>), ()>
+    where
+        Self: Sized,
+    {
+        if raw[0] != b'd' {
+            // Attempt to parse handshake message
+            let mut len_prefix: &[u8] = &raw[0..4];
+            let len_prefix: usize = len_prefix
+                .read_u32::<BigEndian>()
+                .unwrap()
+                .try_into()
+                .unwrap();
+
+            if len_prefix + 4 > raw.len() {
+                return Ok((None, raw.to_vec()));
+            }
+
+            // Length prefix itself is 4B (and excluded from the message length), so offset end by 4
+            let end: usize = len_prefix + 4;
+
+            // Split into bencoded message and remaining bytes
+            let msg_bytes = &raw[6..end];
+            let rem = &raw[end..];
+
+            return match MetadataHandshake::from_bencode(msg_bytes) {
+                Ok(v) => Ok((Some(MetadataMessage::MetadataHandshake(v)), rem.to_vec())),
+                Err(e) => {
+                    log_err!("{:?}\nMessage: {:?}", e, msg_bytes);
+                    Err(())
+                }
+            };
+        }
+
+        let bencode_end = match raw
+            .windows(2)
+            .enumerate()
+            .find(|(_, s)| b"ee" == s)
+            .map(|(idx, _)| idx)
+        {
+            Some(v) => v + 2,
+            None => return Err(()),
+        };
+
+        return match MetadataResponse::from_bencode(raw) {
+            Ok(mut v) => {
+                let total_size: usize = v.total_size.try_into().unwrap();
+                v.data = raw[bencode_end..total_size].to_vec();
+                let rem = raw[total_size..].to_vec();
+                
+                Ok((Some(MetadataMessage::MetadataResponse(v)), rem))
+            }
+            Err(e) => {
+                log_err!("{:?}\nMessage: {:?}\nUTF8: {}\n", e, raw, String::from_utf8_lossy(&raw));
+                Err(())
+            }
+        };
+        // TODO: handle other cases
+    }
+}
+
+// Handshake send by peer to indicate size of metadata info hash
+#[derive(PartialEq, Debug)]
+pub struct MetadataHandshake {
+    pub msg_code: u32,
+    pub size: u32,
+}
+
+impl FromBencode for MetadataHandshake {
+    fn decode_bencode_object(object: bendy::decoding::Object) -> Result<Self, DecError>
+    where
+        Self: Sized,
+    {
+        let mut msg_code: Option<u32> = None;
+        let mut size: Option<u32> = None;
+
+        let mut dict = object.try_into_dictionary()?;
+
+        while let Some(pair) = dict.next_pair()? {
+            match pair {
+                (b"metadata_size", v) => {
+                    size = u32::decode_bencode_object(v)
+                        .context("metadata_size")
+                        .map(Some)?;
+                }
+                (b"m", v) => {
+                    // Parse inner dictionary of extensions
+                    let mut ext_dict = v.try_into_dictionary()?;
+                    while let Some(pair_) = ext_dict.next_pair()? {
+                        match pair_ {
+                            (b"ut_metadata", val) => {
+                                msg_code = u32::decode_bencode_object(val)
+                                    .context("ut_metadata: msg_code")
+                                    .map(Some)?;
+                                break;
+                            }
+                            _ => continue,
+                        }
+                    }
+                }
+                _ => continue,
+            }
+        }
+
+        let size = size.ok_or_else(|| DecError::missing_field("size"))?;
+        let msg_code = msg_code.ok_or_else(|| DecError::missing_field("msg_code"))?;
+
+        Ok(Self { msg_code, size })
+    }
+}
+
+impl ToBencode for MetadataHandshake {
+    const MAX_DEPTH: usize = 4;
+
+    fn encode(&self, encoder: SingleItemEncoder) -> Result<(), bendy::encoding::Error> {
+        encoder.emit_dict(|mut e| {
+            e.emit_pair_with(b"m", |e| {
+                e.emit_dict(|mut e| e.emit_pair(b"ut_metadata", self.msg_code))
+            })?;
+            e.emit_pair(b"metadata_size", self.size)?;
+            Ok(())
+        })?;
+
+        Ok(())
+    }
+}
+
+// Request a piece of metadata
+#[derive(PartialEq, Debug)]
+pub struct MetadataRequest {
+    pub piece_index: u32,
+}
+
+impl FromBencode for MetadataRequest {
+    fn decode_bencode_object(object: bendy::decoding::Object) -> Result<Self, DecError>
+    where
+        Self: Sized,
+    {
+        let mut piece_index: Option<u32> = None;
+
+        let mut dict = object.try_into_dictionary()?;
+
+        while let Some(pair) = dict.next_pair()? {
+            match pair {
+                (b"piece", v) => {
+                    piece_index = u32::decode_bencode_object(v)
+                        .context("piece index")
+                        .map(Some)?;
+                }
+                _ => continue,
+            }
+        }
+
+        let piece_index = piece_index.ok_or_else(|| DecError::missing_field("piece"))?;
+
+        Ok(Self { piece_index })
+    }
+}
+
+impl ToBencode for MetadataRequest {
+    const MAX_DEPTH: usize = 3;
+
+    fn encode(&self, encoder: SingleItemEncoder) -> Result<(), bendy::encoding::Error> {
+        encoder.emit_dict(|mut e| {
+            e.emit_pair(b"msg_type", 0)?;
+            e.emit_pair(b"piece", self.piece_index)?;
+            Ok(())
+        })?;
+
+        Ok(())
+    }
+}
+
+// Response message from a metadata request
+#[derive(PartialEq, Debug)]
+pub struct MetadataResponse {
+    pub piece_index: u32,
+    pub total_size: u32,
+    pub data: Vec<u8>,
+}
+
+// The From/ToBencode implementations here solely deal with the bencoded part of the message - the full (de)serialisation
+// is carried out in MetadataMessage
+impl FromBencode for MetadataResponse {
+    fn decode_bencode_object(object: bendy::decoding::Object) -> Result<Self, DecError>
+    where
+        Self: Sized,
+    {
+        let mut piece_index: Option<u32> = None;
+        let mut total_size: Option<u32> = None;
+
+        let mut dict = object.try_into_dictionary()?;
+
+        while let Some(pair) = dict.next_pair()? {
+            match pair {
+                (b"piece", v) => {
+                    piece_index = u32::decode_bencode_object(v)
+                        .context("piece index")
+                        .map(Some)?;
+                }
+                (b"total_size", v) => {
+                    total_size = u32::decode_bencode_object(v)
+                        .context("total size")
+                        .map(Some)?;
+                }
+                _ => continue,
+            }
+        }
+
+        let piece_index = piece_index.ok_or_else(|| DecError::missing_field("piece"))?;
+        let total_size = total_size.ok_or_else(|| DecError::missing_field("piece"))?;
+
+        Ok(Self {
+            piece_index,
+            total_size,
+            data: Vec::new(),
+        })
+    }
+}
+
+impl ToBencode for MetadataResponse {
+    const MAX_DEPTH: usize = 3;
+
+    fn encode(&self, encoder: SingleItemEncoder) -> Result<(), bendy::encoding::Error> {
+        encoder.emit_dict(|mut e| {
+            e.emit_pair(b"msg_type", 1)?;
+            e.emit_pair(b"piece", self.piece_index)?;
+            e.emit_pair(b"total_size", self.total_size)?;
+            Ok(())
+        })?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    // Verifies that serialising a message, then parsing it from the bytes perserves the original message
+    fn serialise_then_deserialise_preserves(msg: &MetadataMessage, msg_type: &str) {
+        let bytes = msg.serialise();
+        log!("{:?}", bytes);
+
+        let res = MetadataMessage::deserialise(&bytes);
+
+        let (parsed_msg, rem) = res.expect(&format!("Failed to deserialise {} message", msg_type));
+
+        let parsed_msg = parsed_msg.expect(&format!("Got None when parsing {} message", msg_type));
+
+        assert_eq!(msg, &parsed_msg, "Got different result when deserialising {} message", msg_type);
+        assert!(rem.is_empty(), "Got non-empty remainder when deserialising {} message", msg_type);
+    }
+
+    // Verifies that parsing a message, then serialising it preserves the original bytes
+    fn deserialise_then_serialise_preserves(raw: &Vec<u8>, msg_type: &str) {
+        let (msg, rem) = MetadataMessage::deserialise(&raw)
+            .expect(&format!("Failed to deserialise {} message", msg_type));
+
+        let msg = msg.expect(&format!("Got None when parsing {} message", msg_type));
+
+        let msg_bytes = msg.serialise();
+
+        let all_bytes = [msg_bytes, rem].concat();
+
+        assert_eq!(raw, &all_bytes, "Got different result when serialising {} message", msg_type);
+    }
+
+    #[test]
+    fn serialise_then_parse_preserves_handshake() {
+        let handshake = MetadataMessage::MetadataHandshake(MetadataHandshake {
+            msg_code: 4,
+            size: 42,
+        });
+
+        serialise_then_deserialise_preserves(&handshake, "handshake");
+    }
+
+    #[test]
+    pub fn parse_then_serialise_handshake() {
+        let raw: Vec<u8> = vec![
+            0, 0, 0, 46, 20, 0, 100, 49, 58, 109, 100, 49, 49, 58, 117, 116, 95, 109, 101, 116, 97,
+            100, 97, 116, 97, 105, 52, 101, 101, 49, 51, 58, 109, 101, 116, 97, 100, 97, 116, 97,
+            95, 115, 105, 122, 101, 105, 52, 50, 101, 101, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+            13, 14, 15, 16, 17, 18, 19, 20,
+        ];
+
+        deserialise_then_serialise_preserves(&raw, "handshake");
+    }
+
+    #[test]
+    pub fn parse_then_serialise_other() {
+        let raw: Vec<u8> = vec![
+            100, 49, 58, 101, 105, 48, 101, 52, 58, 105, 112, 118, 52, 52, 58, 69, 176, 168, 52,
+            49, 50, 58, 99, 111, 109, 112, 108, 101, 116, 101, 95, 97, 103, 111, 105, 52, 101, 49,
+            58, 109, 100, 49, 49, 58, 117, 112, 108, 111, 97, 100, 95, 111, 110, 108, 121, 105, 51,
+            101, 49, 50, 58, 117, 116, 95, 104, 111, 108, 101, 112, 117, 110, 99, 104, 105, 52,
+            101, 49, 49, 58, 117, 116, 95, 109, 101, 116, 97, 100, 97, 116, 97, 105, 50, 101, 54,
+            58, 117, 116, 95, 112, 101, 120, 105, 49, 101, 49, 50, 58, 117, 116, 95, 114, 101, 99,
+            111, 109, 109, 101, 110, 100, 105, 53, 101, 49, 48, 58, 117, 116, 95, 99, 111, 109,
+            109, 101, 110, 116, 105, 54, 101, 101, 49, 51, 58, 109, 101, 116, 97, 100, 97, 116, 97,
+            95, 115, 105, 122, 101, 105, 50, 52, 51, 48, 54, 101, 49, 58, 112, 105, 50, 48, 51, 52,
+            52, 101, 52, 58, 114, 101, 113, 113, 105, 50, 53, 53, 101, 49, 58, 118, 49, 51, 58,
+            194, 181, 84, 111, 114, 114, 101, 110, 116, 32, 51, 46, 50, 54, 58, 121, 111, 117, 114,
+            105, 112, 52, 58, 80, 1, 160, 54, 101,
+        ];
+
+        deserialise_then_serialise_preserves(&raw, "other");
     }
 }

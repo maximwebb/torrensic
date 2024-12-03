@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::torrent_info::magnet_acquirer::GetPeersResponse;
+use crate::{log, log_err, torrent_info::magnet_acquirer::GetPeersResponse};
 
 use bendy::decoding::FromBencode;
 use tokio::sync::{mpsc, oneshot};
@@ -22,7 +22,7 @@ pub(crate) async fn run(
         let addr = match rx.await? {
             Some(v) => v,
             None => {
-                println!("Got None when requesting node address, exiting");
+                log!("Got None when requesting node address, exiting");
                 break;
             },
         };
@@ -37,7 +37,7 @@ pub(crate) async fn run(
         let GetPeersResponse{ peers, id, nodes } = match MagnetMessage::<GetPeersResponse>::from_bencode(&resp) {
             Ok(v) => v.payload,
             Err(e) => {
-                println!("Error parsing response: {}", e.to_string());
+                log_err!("Error parsing response: {}", e.to_string());
                 continue;
             }
         };

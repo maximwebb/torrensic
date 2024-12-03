@@ -1,13 +1,16 @@
-mod connection;
-mod message;
+pub mod connection;
+pub mod message;
 
 use std::cmp::min;
+use std::error::Error;
 use std::io::{Error as IOError, ErrorKind};
 use std::mem;
 use std::sync::Arc;
 
 use bitvec::prelude::*;
 
+use message::interested::Interested;
+use message::request::Request;
 use tokio::sync::mpsc::{self};
 use tokio::sync::oneshot;
 
@@ -18,14 +21,16 @@ use message::Message;
 
 use crate::builder::file_builder;
 use crate::client::manager::BitVecMutex;
+use crate::log;
 use crate::parser::metadata::Metadata;
 
 use connection::Connection;
 
+
 use super::admin_message::{
     AdminMessage, PeerBitfield, PeerDisconnect, PieceDownload, PieceIndexRequest,
 };
-
+// Should this be PieceAcquirer?
 pub struct PeerHandler {
     peer_state: PeerState,
     md: Arc<Metadata>,
@@ -63,7 +68,7 @@ impl PeerHandler {
     pub(crate) async fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let (tx_cancel, mut rx_cancel) = mpsc::channel::<()>(1);
 
-        let mut conn = Connection::new(&self.addr, &self.md, tx_cancel).await?;
+        let mut conn = Connection::new(&self.addr, &self.md.info_hash, tx_cancel, false).await?;
 
         let mut peer_state = PeerState {
             client_choked: true,
@@ -136,9 +141,9 @@ impl PeerHandler {
 
                     if let Some(index) = piece_index {
                         if !peer_state.client_choked {
-                            conn.request_block(&self.md, index, block_index).await?;
+                            self.send_request(&mut conn, index, block_index).await?;
                         } else {
-                            conn.send_interested().await?;
+                            self.send_interested(&mut conn).await?;
                         }
                     }
                 }
@@ -185,10 +190,10 @@ impl PeerHandler {
                         // Request next block
                         if !peer_state.client_choked && peer_state.peer_interested {
                             if let Some(index) = piece_index {
-                                conn.request_block(&self.md, index, block_index).await?;
+                                self.send_request(&mut conn, index, block_index).await?;
                             }
                         } else {
-                            conn.send_interested().await?;
+                            self.send_interested(&mut conn).await?;
                         }
                     } else {
                         // Received wrong block
@@ -197,18 +202,18 @@ impl PeerHandler {
                 Message::Choke(_) => {
                     peer_state.client_choked = true;
                     if !peer_state.client_interested {
-                        conn.send_interested().await?;
+                        self.send_interested(&mut conn).await?;
                         peer_state.client_interested = true;
                     }
                 }
                 Message::Unchoke(_) => {
                     peer_state.client_choked = false;
                     if !peer_state.client_interested {
-                        conn.send_interested().await?;
+                        self.send_interested(&mut conn).await?;
                         peer_state.client_interested = true;
                     }
                     if let Some(index) = piece_index {
-                        conn.request_block(&self.md, index, block_index).await?;
+                        self.send_request(&mut conn, index, block_index).await?;
                     }
                 }
                 Message::Interested(_) => {
@@ -257,15 +262,36 @@ impl PeerHandler {
         match rx.await {
             Ok(v) => return v,
             Err(_) => {
-                println!("Client received error");
+                log!("Client received error");
                 return None;
             }
         }
     }
 
+    async fn send_interested(&mut self, conn: &mut Connection<Message>) -> Result<(), Box<dyn Error>> {
+        let interest_msg = Message::from(Interested {});
+        return conn.push(interest_msg).await;
+    }
+
+    async fn send_request(
+        &mut self,
+        conn: &mut Connection<Message>,
+        piece_index: u32,
+        block_index: u32,
+    ) -> Result<(), Box<dyn Error>> {
+        let request_msg = Message::from(Request {
+            index: piece_index,
+            begin: block_index * (2 << 13),
+            length: self.md.block_len(piece_index, block_index),
+        });
+
+        return conn.push(request_msg).await;
+    }
+
     async fn start(mut proto_task: PeerHandler) {
         let _ = proto_task.run().await;
     }
+
 }
 
 fn bitvec_to_bytes(bits: &BitVec<u8, Msb0>) -> Vec<u8> {

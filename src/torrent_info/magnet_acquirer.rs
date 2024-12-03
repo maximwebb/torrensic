@@ -7,15 +7,16 @@ use std::{
 };
 
 use bendy::{decoding::FromBencode, encoding::ToBencode};
+use priority_queue::PriorityQueue;
 use rand::{rngs::StdRng, Rng, SeedableRng};
-use tokio::{net::UdpSocket, sync::mpsc, time::timeout};
+use tokio::{net::UdpSocket, select, sync::mpsc, time::timeout};
 
 use crate::{
-    client::ProtocolError::TorrentInfoAcquireFailed,
-    parser::magnet_message::{Endpoint, GetPeers, GetPeersResponse, MagnetMessage, Ping},
+    client::{peer_handler::{connection::Connection, message::{extended::Extended, Message}}, ProtocolError::TorrentInfoAcquireFailed}, log, log_err, log_warn, parser::{magnet_message::{Endpoint, GetPeers, GetPeersResponse, MagnetMessage, MetadataMessage, MetadataRequest, Ping}, metadata::Metadata}, utils
 };
 
-use super::TorrentInfoAcquirer;
+use super::{TorrentInfo, TorrentInfoAcquirer};
+
 
 async fn make_req(
     msg_bytes: &Vec<u8>,
@@ -26,7 +27,7 @@ async fn make_req(
     match socket.connect(addr).await {
         Ok(_) => {}
         Err(e) => {
-            println!("Got error during connection: {e}");
+            log_err!("Got error during connection: {e}");
             return Ok(None);
         }
     };
@@ -34,7 +35,7 @@ async fn make_req(
     let _len = match socket.send(&msg_bytes).await {
         Ok(_len) => _len,
         Err(e) => {
-            println!("Got error while sending: {e}");
+            log_err!("Got error while sending: {e}");
             return Ok(None);
         }
     };
@@ -44,13 +45,13 @@ async fn make_req(
 
     let len = match timeout(Duration::from_millis(500), resp).await {
         Err(_) => {
-            // println!("Timeout when attempting to perform UDP tracker handshake with {addr} after 500ms");
+            // log!("Timeout when attempting to perform UDP tracker handshake with {addr} after 500ms");
             return Ok(None);
         }
         Ok(fut) => match fut {
             Ok(len) => len,
             Err(e) => {
-                println!("Got error while receiving: {e}");
+                log_err!("Got error while receiving: {e}");
                 return Ok(None);
             }
         },
@@ -58,13 +59,68 @@ async fn make_req(
     Ok(Some(buf[..len].to_vec()))
 }
 
+fn compute_node_id(ip: u32) -> Vec<u8> {
+    let mut rng = StdRng::seed_from_u64(42);
+    let rand: u8 = rng.gen();
+    let r: u32 = (rand & 0x7).into();
+
+    let bytes = (ip & 0x03_0f_3f_ff) | (r << 29);
+    let bytes = bytes.to_be_bytes();
+
+    let hash = crc32c::crc32c(&bytes).to_be_bytes();
+
+    let mut node_id = hash[..3].to_vec();
+    node_id.extend_from_slice(&rng.gen::<[u8; 16]>());
+    node_id.push(rand);
+
+    node_id
+}
+
+fn parse_info_hash(link: &str) -> Option<Vec<u8>> {
+    if !link.starts_with("magnet:?") {
+        return None;
+    }
+
+    let pairs = link[8..].split('&');
+
+    for pair in pairs {
+        let mut splitter = pair.splitn(2, '=');
+        if splitter.next().unwrap() != "xt" {
+            continue;
+        }
+
+        let v = splitter.next().unwrap();
+        if !v.starts_with("urn:btih:") {
+            log!("Error: got unexpected value for xt in magnet link: {}", v);
+            continue;
+        }
+
+        let info_hash = v[9..].to_string();
+
+        if info_hash.len() != 40 {
+            log!(
+                "Error: got unexpected info hash length in magnet link: {}",
+                info_hash
+            );
+            continue;
+        }
+
+        let info_hash = hex::decode(info_hash).expect("Error: Invalid info hash");
+        return Some(info_hash);
+    }
+
+    return None;
+}
+
+#[derive(Clone)]
 pub(crate) struct MagnetAcquirer {
-    bootstrap_nodes: Vec<SocketAddrV4>,
+    bootstrap_nodes: Arc<Vec<SocketAddrV4>>,
 }
 
 impl MagnetAcquirer {
     pub(crate) fn new() -> Self {
         let endpoints = vec![
+            "201.92.174.163:15375",
             "37.14.4.86:33167",
             "45.155.42.24:28402",
             "54.234.214.165:6881",
@@ -233,48 +289,11 @@ impl MagnetAcquirer {
         ];
 
         return MagnetAcquirer {
-            bootstrap_nodes: endpoints
+            bootstrap_nodes: Arc::new(endpoints
                 .into_iter()
                 .map(|endpoint| endpoint.parse().unwrap())
-                .collect(),
+                .collect()),
         };
-    }
-
-    // TODO: separate out into MagnetLink struct
-    fn parse_info_hash(link: &str) -> Option<Vec<u8>> {
-        if !link.starts_with("magnet:?") {
-            return None;
-        }
-
-        let pairs = link[8..].split('&');
-
-        for pair in pairs {
-            let mut splitter = pair.splitn(2, '=');
-            if splitter.next().unwrap() != "xt" {
-                continue;
-            }
-
-            let v = splitter.next().unwrap();
-            if !v.starts_with("urn:btih:") {
-                println!("Error: got unexpected value for xt in magnet link: {}", v);
-                continue;
-            }
-
-            let info_hash = v[9..].to_string();
-
-            if info_hash.len() != 40 {
-                println!(
-                    "Error: got unexpected info hash length in magnet link: {}",
-                    info_hash
-                );
-                continue;
-            }
-
-            let info_hash = hex::decode(info_hash).expect("Error: Invalid info hash");
-            return Some(info_hash);
-        }
-
-        return None;
     }
 
     async fn acquire_node_hash(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
@@ -284,7 +303,7 @@ impl MagnetAcquirer {
         };
         let ping_bytes = ping.to_bencode().unwrap();
 
-        for addr in &self.bootstrap_nodes {
+        for addr in self.bootstrap_nodes.iter() {
             let resp_bytes = match make_req(&ping_bytes, addr).await? {
                 Some(v) => v,
                 None => continue,
@@ -292,7 +311,7 @@ impl MagnetAcquirer {
 
             let ip = match Endpoint::from_bencode(&resp_bytes) {
                 Ok(v) => {
-                    println!(
+                    log!(
                         "Got own endpoint: {:?}:{:?} from peer: {:?}",
                         Ipv4Addr::from(v.ip),
                         v.port,
@@ -301,12 +320,12 @@ impl MagnetAcquirer {
                     v.ip
                 }
                 Err(e) => {
-                    println!("Got error: {e}");
+                    log_err!("{e}");
                     continue;
                 }
             };
 
-            return Ok(Self::compute_node_id(ip));
+            return Ok(compute_node_id(ip));
         }
         Err(Box::new(TorrentInfoAcquireFailed(
             "Could not determine our node ID from bootstrap nodes".to_owned(),
@@ -317,9 +336,13 @@ impl MagnetAcquirer {
         &self,
         id: Vec<u8>,
         info_hash: Vec<u8>,
-    ) -> Result<HashSet<SocketAddrV4>, Box<dyn std::error::Error>> {
-        // TODO: Make this a priority queue
-        let mut unvisited_nodes = self.bootstrap_nodes.clone();
+        tx_peers: mpsc::Sender::<Vec<SocketAddrV4>>
+    ) -> Result<HashSet<SocketAddrV4>, ()> {
+        let nodes: Vec<SocketAddrV4> = self.bootstrap_nodes.to_vec();
+        let mut unvisited_nodes = PriorityQueue::new();
+        for node in nodes {
+            unvisited_nodes.push(node, 200);
+        }
         let mut visited_nodes = HashSet::<SocketAddrV4>::new();
         let mut peers = HashSet::<SocketAddrV4>::new();
         let max_peers = 100;
@@ -335,13 +358,19 @@ impl MagnetAcquirer {
         };
         let get_peers_bytes = Arc::new(get_peers.to_bencode().unwrap());
 
+        // TODO REMOVE: start off with a known good IP
+        let init_ip1: SocketAddrV4 = "41.133.89.199:6881".parse().unwrap();
+        let init_ip2: SocketAddrV4 = "201.92.174.163:15375".parse().unwrap();
+        let init_ip2: SocketAddrV4 = "94.2.212.131:10982".parse().unwrap();
+        let _ = tx_peers.send(vec![init_ip1, init_ip2]).await;
+
         for _ in 0..num_workers {
             let bytes = get_peers_bytes.clone();
             let tx = tx_admin_message.clone();
             tokio::spawn(async { match peer_acquirer::run(bytes, tx).await {
                 Ok(_) => {},
                 Err(e) => {
-                    println!("Got err: {}", e);
+                    log!("Got err: {}", e);
                 },
             } });
         }
@@ -351,7 +380,8 @@ impl MagnetAcquirer {
                 admin_message = rx_admin_message.recv() => {
                     match admin_message.expect("Error receiving message") {
                         admin_message::AdminMessage::NodeAddressRequest(req) => {
-                            let addr = unvisited_nodes.pop();
+                            let val = unvisited_nodes.pop();
+                            let addr = val.map(|(v, _)| v);
                             if let Some(v) = addr {
                                 visited_nodes.insert(v);
                             }
@@ -361,11 +391,12 @@ impl MagnetAcquirer {
                             if !req.peers.is_empty() {
                                 let endpoints = HashSet::<SocketAddrV4>::from_iter(req.peers);
                                 let endpoints: HashSet<_> = endpoints.difference(&peers).cloned().collect();
-                                println!(
+                                log!(
                                     "Got {} new peer endpoints (total: {})",
                                     endpoints.len(),
                                     endpoints.len() + peers.len()
                                 );
+                                let _ = tx_peers.send(endpoints.clone().into_iter().collect()).await;
                                 peers.extend(endpoints);
                         
                                 if peers.len() >= max_peers {
@@ -376,14 +407,14 @@ impl MagnetAcquirer {
                                 let pre_len = unvisited_nodes.len();
                                 for node in req.nodes {
                                     if !visited_nodes.contains(&node) {
-                                        unvisited_nodes.push(node);
+                                        unvisited_nodes.push(node, utils::fuzzy_xor_distance(&req.id, &info_hash));
                                     }
                                 }
-                                println!(
+                                log!(
                                     "Got {} new node endpoints (total: {}, xor distance: {})",
                                     unvisited_nodes.len() - pre_len,
                                     unvisited_nodes.len(),
-                                    Self::compute_xor_distance(&info_hash, &req.id)
+                                    utils::fuzzy_xor_distance(&info_hash, &req.id)
                                 );
                             }
                             let _ = req.ack.send(());
@@ -394,52 +425,77 @@ impl MagnetAcquirer {
         }
 
         if peers.is_empty() {
-            return Err(Box::new(TorrentInfoAcquireFailed(
-                "Failed to acquire peers from DHT".to_owned(),
-            )));
+            log!("Error: failed to acquire peers from DHT, stopping...");
+            return Err(());
         }
 
         Ok(peers)
     }
 
-    fn compute_node_id(ip: u32) -> Vec<u8> {
-        let mut rng = StdRng::seed_from_u64(42);
-        let rand: u8 = rng.gen();
-        let r: u32 = (rand & 0x7).into();
+    async fn acquire_metadata(&self, info_hash: Vec<u8>, rx_peers: &mut mpsc::Receiver::<Vec<SocketAddrV4>>) -> Result<Metadata, Box<dyn std::error::Error>> {
+        loop
+        {
+            let peers = rx_peers.recv().await.expect("Received invalid peer message");
+            for addr in peers {
+                let (tx_cancel, mut rx_cancel) = mpsc::channel::<()>(1);
 
-        let bytes = (ip & 0x03_0f_3f_ff) | (r << 29);
-        let bytes = bytes.to_be_bytes();
+                let mut conn = match Connection::new(&addr.to_string(), &info_hash, tx_cancel, true).await {
+                    Ok(v) => v,
+                    Err(_) => {
+                        log_warn!("Failed to connect to {}", addr);
+                        continue;
+                    },
+                };
 
-        let hash = crc32c::crc32c(&bytes).to_be_bytes();
+                log!("Connected to {}", addr);
 
-        let mut node_id = hash[..3].to_vec();
-        node_id.extend_from_slice(&rng.gen::<[u8; 16]>());
-        node_id.push(rand);
+                let mut size: Option<u32> = None;
+                let mut piece_index: u32 = 0;
 
-        node_id
-    }
+                loop {
+                    let msg = tokio::select! {
+                        v = conn.pop() => {
+                            match v {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    log!("Error: {}", e);
+                                    break;
+                                },
+                            }
+                        }
+                        _ = rx_cancel.recv() => {
+                            break;
+                        }
+                    };
 
-    fn compute_xor_distance(x: &Vec<u8>, y: &Vec<u8>) -> f32 {
-        if x.len() != y.len() {
-            println!("Error: mismatched sizes (x: {}, y: {})", x.len(), y.len());
+                    match msg {
+                        MetadataMessage::MetadataHandshake(v) => {
+                            size = Some(v.size);
+                            log!("Got handshake, metadata size: {}", v.size);
+                        }
+                        _ => continue
+                    }
+                    let req = MetadataRequest{piece_index};
+                    // log!("req_bytes: {}", String::from_utf8_lossy(&req_bytes));
+                    // TODO MW: Why isn't MetadataMessage::from working?
+                    conn.push(MetadataMessage::MetadataRequest(req)).await?;
+                }
+            }
+
         }
-
-        let mut res = 0;
-
-        for v in x.iter().zip(y.iter()).map(|(a, b)| a ^ b) {
-            res += if v == 0 { 8 } else { v.leading_zeros() }
-        }
-        return 100.0 - res as f32 / 1.6;
+        
+        todo!()
     }
 }
 
+// Responsive IP: 41.133.89.199:6881
 impl TorrentInfoAcquirer for MagnetAcquirer {
     async fn acquire(
         &self,
         torrent: String,
-    ) -> Result<super::TorrentInfo, Box<dyn std::error::Error>> {
+    ) -> Result<TorrentInfo, Box<dyn std::error::Error>> {
         let id = self.acquire_node_hash().await?;
-        let info_hash = match Self::parse_info_hash(&torrent) {
+        let info_hash = match parse_info_hash(&torrent) {
             Some(v) => v,
             None => {
                 return Err(Box::new(TorrentInfoAcquireFailed(
@@ -448,17 +504,26 @@ impl TorrentInfoAcquirer for MagnetAcquirer {
             }
         };
 
-        let peers = self.acquire_peers(id, info_hash).await?;
+        let (tx_peers, mut rx_peers) = mpsc::channel::<Vec<SocketAddrV4>>(8);
 
-        println!(
-            "Got peers!: {}",
-            peers
-                .iter()
-                .map(|x| x.to_string())
-                .collect::<Vec<String>>()
-                .join(", ")
-        );
+        let acquirer = self.clone();
+        let info_hash_copy = info_hash.clone();
+        tokio::spawn(async move { acquirer.acquire_peers(id, info_hash_copy, tx_peers).await });
 
-        todo!()
+        // log!(
+        //     "Got peers!: {}",
+        //     peers
+        //         .iter()
+        //         .map(|x| x.to_string())
+        //         .collect::<Vec<String>>()
+        //         .join(", ")
+        // );
+
+        let md = match self.acquire_metadata(info_hash, &mut rx_peers).await {
+            Ok(v) => v,
+            Err(e) => return Err(e),
+        };
+
+        Ok(TorrentInfo{md, init_peers: Vec::new(), peers_chan: Some(rx_peers)})
     }
 }

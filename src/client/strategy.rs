@@ -54,7 +54,7 @@ impl Strategy {
                 }
             }
             AdminMessage::PeerDisconnect(_req) => {
-                //println!("{0} disconnected", req.addr);
+                //log!("{0} disconnected", req.addr);
             }
         }
         return Ok(());

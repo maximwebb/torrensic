@@ -20,7 +20,7 @@ use ratatui::{
     Terminal,
 };
 
-use crate::parser::{metadata::Metadata, tracker_info::PeerInfo};
+use crate::{log, parser::{metadata::Metadata, tracker_info::PeerInfo}};
 
 use super::{
     components::{title::Title, torrent_progress::TorrentProgress},
@@ -31,6 +31,7 @@ use super::{
     },
     Draw,
 };
+
 
 pub(crate) struct Controller {
     pub(crate) md: Arc<Metadata>,
@@ -121,7 +122,7 @@ impl Controller {
             if event::poll(Duration::from_millis(250))? {
                 if let Event::Key(key) = event::read()? {
                     if KeyCode::Char('q') == key.code {
-                        println!("Quit");
+                        log!("Quit");
                         break;
                     }
                     match self.panel_state {

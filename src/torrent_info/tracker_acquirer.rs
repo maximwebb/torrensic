@@ -1,7 +1,7 @@
-use crate::parser::{
+use crate::{log, parser::{
     metadata::{get_urlenc_info_hash, read_metadata, Metadata},
     tracker_info::TrackerInfo,
-};
+}};
 
 use bendy::decoding::FromBencode;
 use byteorder::{BigEndian, ReadBytesExt};
@@ -13,6 +13,7 @@ use tokio::{net::UdpSocket, time::timeout};
 use urlencoding::encode_binary;
 
 use super::{TorrentInfo, TorrentInfoAcquirer};
+
 
 pub(crate) struct TrackerAcquirer {}
 
@@ -129,7 +130,7 @@ impl TrackerAcquirer {
                         break;
                     }
 
-                    println!("Failed to receive announce response from tracker after {timeout_duration}ms, retrying...");
+                    log!("Failed to receive announce response from tracker after {timeout_duration}ms, retrying...");
                     timeout_duration *= 2;
                     continue;
                 }
@@ -210,7 +211,8 @@ impl TorrentInfoAcquirer for TrackerAcquirer {
 
         Ok(TorrentInfo {
             md,
-            peers: tracker_info.peers,
+            init_peers: tracker_info.peers,
+            peers_chan: None
         })
     }
 }

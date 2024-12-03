@@ -3,6 +3,7 @@ mod read_task;
 
 use std::{error::Error, time::Duration};
 
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::oneshot::error::RecvError;
 use tokio::sync::{mpsc, oneshot};
 use tokio::{
@@ -12,24 +13,32 @@ use tokio::{
 };
 
 use read_task::{run_read_task, ReadTask};
-use crate::parser::metadata::Metadata;
 
 use self::handshake::handshake;
-use super::message::interested::Interested;
-use super::message::request::Request;
-use super::message::{Message, PeerWireMessage};
 
-pub struct Connection {
-    msg_queue: Vec<Message>,
-    wr: WriteHalf<TcpStream>,
-    sender: mpsc::Sender<MessageRequest>,
+// Move to common / networking mod (perhaps merge utils + this into common)
+pub trait Serialisable {
+    fn serialise(&self) -> Vec<u8>;
 }
 
-impl Connection {
+pub trait Deserialisable {
+    fn deserialise(raw: &Vec<u8>) -> Result<(Option<Self>, Vec<u8>), ()>
+    where
+        Self: Sized;
+}
+
+pub struct Connection<T: Serialisable + Deserialisable + Send + 'static> {
+    msg_queue: Vec<T>,
+    wr: WriteHalf<TcpStream>,
+    sender: mpsc::Sender<MessageRequest<T>>,
+}
+
+impl<T: Serialisable + Deserialisable + Send + 'static> Connection<T> {
     pub(crate) async fn new(
         addr: &str,
-        md: &Metadata,
+        info_hash: &Vec<u8>,
         cancel_sender: mpsc::Sender<()>,
+        req_metadata: bool,
     ) -> Result<Self, Box<dyn Error>> {
         let socket = TcpStream::connect(addr);
         let socket = match timeout(Duration::from_millis(3000), socket).await {
@@ -41,9 +50,10 @@ impl Connection {
         };
 
         let (mut rd, mut wr) = tokio::io::split(socket);
-        let rem = handshake(&md, &mut rd, &mut wr).await?;
+        let rem = handshake(&info_hash, &mut rd, &mut wr, req_metadata).await?;
 
-        let (sender, receiver) = mpsc::channel(8);
+        let (sender, receiver): (Sender<MessageRequest<T>>, Receiver<MessageRequest<T>>) =
+            mpsc::channel(8);
 
         let conn = Connection {
             msg_queue: Vec::new(),
@@ -53,16 +63,16 @@ impl Connection {
 
         let read_task = ReadTask::new(rd, rem, receiver, cancel_sender);
         tokio::spawn(run_read_task(read_task));
-        
+
         Ok(conn)
     }
 
     // Updates message queue by polling read task, and returns top message if it exists
-    pub(crate) async fn pop(&mut self) -> Result<Message, RecvError> {
+    pub(crate) async fn pop(&mut self) -> Result<T, RecvError> {
         let msg = loop {
             match self.refresh_msg_queue().await {
-                Ok(_) => {},
-                Err(err) => return Err(err)
+                Ok(_) => {}
+                Err(err) => return Err(err),
             }
             match self.msg_queue.pop() {
                 Some(v) => break v,
@@ -71,47 +81,30 @@ impl Connection {
         };
         Ok(msg)
     }
-    
-    pub(crate) async fn push(&mut self, msg: Message) -> Result<(), Box<dyn Error>> {
+
+    pub(crate) async fn push(&mut self, msg: T) -> Result<(), Box<dyn Error>> {
         self.wr.write_all(&msg.serialise()).await?;
         Ok(())
     }
 
-    pub(crate) async fn send_interested(&mut self) -> Result<(), Box<dyn Error>> {
-        let interest_msg = Message::from(Interested {});
-        self.wr.write_all(&interest_msg.serialise()).await?;
-        Ok(())
-    }
-
-    pub(crate) async fn request_block(
-        &mut self,
-        md: &Metadata,
-        piece_index: u32,
-        block_index: u32,
-    ) -> Result<(), Box<dyn Error>> {
-        let request_msg = Message::from(Request {
-            index: piece_index,
-            begin: block_index * (2 << 13),
-            length: md.block_len(piece_index, block_index),
-        });
-        self.wr.write_all(&request_msg.serialise()).await?;
+    pub(crate) async fn push_raw(&mut self, msg_bytes: &Vec<u8>) -> Result<(), Box<dyn Error>> {
+        self.wr.write_all(&msg_bytes).await?;
         Ok(())
     }
 
     async fn refresh_msg_queue(&mut self) -> Result<(), RecvError> {
         let (send, recv) = oneshot::channel();
+        // Wait on the read_task to return one or more messages over the channel
         let _ = self.sender.send(MessageRequest { respond_to: send }).await;
         let msg_queue = match recv.await {
             Ok(queue) => queue,
-            Err(err) => {
-                return Err(err)
-            },
+            Err(err) => return Err(err),
         };
         self.msg_queue.splice(0..0, msg_queue);
         Ok(())
     }
 }
 
-pub(crate) struct MessageRequest {
-    pub respond_to: oneshot::Sender<Vec<Message>>,
+pub(crate) struct MessageRequest<T: Serialisable + Deserialisable> {
+    pub respond_to: oneshot::Sender<Vec<T>>,
 }

@@ -2,7 +2,7 @@ use std::{error::Error, fmt};
 
 pub mod admin_message;
 pub mod manager;
-mod peer_handler;
+pub mod peer_handler;
 mod strategy;
 
 #[derive(Debug)]

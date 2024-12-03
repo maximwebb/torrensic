@@ -6,23 +6,22 @@ use tokio::{
     time::timeout,
 };
 
-use super::super::message::{parse, Message};
+use super::{Deserialisable, MessageRequest, Serialisable};
 
-use super::MessageRequest;
 
-pub struct ReadTask {
+pub struct ReadTask<T: Serialisable + Deserialisable + Send> {
     rd: ReadHalf<TcpStream>,
     buf: Vec<u8>,
-    msg_queue: Vec<Message>,
-    receiver: mpsc::Receiver<MessageRequest>,
+    msg_queue: Vec<T>,
+    receiver: mpsc::Receiver<MessageRequest<T>>,
     cancel_sender: mpsc::Sender<()>,
 }
 
-impl ReadTask {
+impl<T: Serialisable + Deserialisable + Send> ReadTask<T> {
     pub(crate) fn new(
         rd: ReadHalf<TcpStream>,
         buf: Vec<u8>,
-        receiver: mpsc::Receiver<MessageRequest>,
+        receiver: mpsc::Receiver<MessageRequest<T>>,
         cancel_sender: mpsc::Sender<()>,
     ) -> Self {
         ReadTask {
@@ -65,7 +64,7 @@ impl ReadTask {
 
             // Repeatedly parse messages from buffered bytes until unable to do so
             let rem = loop {
-                match parse(&self.buf) {
+                match T::deserialise(&self.buf) {
                     Ok((Some(msg), rem)) => {
                         self.msg_queue.insert(0, msg);
                         self.buf = rem;
@@ -81,6 +80,6 @@ impl ReadTask {
     }
 }
 
-pub(crate) async fn run_read_task(mut read_task: ReadTask) {
+pub(crate) async fn run_read_task<T: Serialisable + Deserialisable + Send>(mut read_task: ReadTask<T>) {
     read_task.read_socket_task().await;
 }

@@ -7,14 +7,15 @@ use std::{
 
 use bitvec::{prelude::Msb0, vec::BitVec};
 
-use crate::parser::{file_info::FilePathInfo, metadata::Metadata};
+use crate::{log, parser::{file_info::FilePathInfo, metadata::Metadata}};
+
 
 pub(crate) fn create(md: &Metadata, dir: &String, overwrite: bool) -> io::Result<()> {
     let files: &Vec<FilePathInfo> = &md.info.files;
     let remove_dir = &format!("{}/{}", dir, &md.info.name);
     if Path::new(remove_dir).is_dir() {
         if overwrite {
-            // println!("Removing existing files in {remove_dir}.");
+            // log!("Removing existing files in {remove_dir}.");
             fs::remove_dir_all(remove_dir)?;
         } else {
             return Ok(());
@@ -92,7 +93,7 @@ pub(crate) fn load_bitfield(md: &Metadata, dir: &str) -> io::Result<BitVec<u8, M
     let raw = match fs::read(path_str) {
         Ok(file) => file,
         Err(e) => {
-            println!("Error reading bitfield.");
+            log!("Error reading bitfield.");
             return Err(e);
         }
     };
