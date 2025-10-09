@@ -3,7 +3,7 @@ use super::PeerWireMessage;
 pub struct Cancel {
     pub index: u32,
     pub begin: u32,
-    pub length: u32
+    pub length: u32,
 }
 
 impl PeerWireMessage for Cancel {

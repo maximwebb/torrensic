@@ -7,8 +7,10 @@ use std::{
 
 use bitvec::{prelude::Msb0, vec::BitVec};
 
-use crate::{log, parser::{file_info::FilePathInfo, metadata::Metadata}};
-
+use crate::{
+    log,
+    parser::{file_info::FilePathInfo, metadata::Metadata},
+};
 
 pub(crate) fn create(md: &Metadata, dir: &String, overwrite: bool) -> io::Result<()> {
     let files: &Vec<FilePathInfo> = &md.info.files;

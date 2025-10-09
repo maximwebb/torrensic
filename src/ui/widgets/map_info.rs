@@ -5,17 +5,17 @@ use ratatui::{
     style::{Color, Stylize},
     symbols::Marker,
     widgets::{
-        canvas::{Canvas, Painter, Shape, MapResolution, Map},
+        canvas::{Canvas, Map, MapResolution, Painter, Shape},
         Block,
     },
     Frame,
 };
 
-use crate::ui::{Draw, data::LatLon};
+use crate::ui::{data::LatLon, Draw};
 
 pub(crate) struct MapInfo {
     width: u16,
-    ip_location_map: Arc<HashMap<String, Option<LatLon>>>
+    ip_location_map: Arc<HashMap<String, Option<LatLon>>>,
 }
 
 impl Draw for MapInfo {
@@ -55,12 +55,10 @@ impl Shape for MapInfo {
 }
 
 impl MapInfo {
-    pub(crate) fn new(
-        ip_location_map: Arc<HashMap<String, Option<LatLon>>>
-    ) -> Self {
+    pub(crate) fn new(ip_location_map: Arc<HashMap<String, Option<LatLon>>>) -> Self {
         MapInfo {
             width: 20,
-            ip_location_map
+            ip_location_map,
         }
     }
 }

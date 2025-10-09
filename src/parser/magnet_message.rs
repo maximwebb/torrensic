@@ -295,10 +295,20 @@ impl Deserialisable for MetadataMessage {
             let msg_bytes = &raw[6..end];
             let rem = &raw[end..];
 
-            return match MetadataHandshake::from_bencode(msg_bytes) {
-                Ok(v) => Ok((Some(MetadataMessage::MetadataHandshake(v)), rem.to_vec())),
+            return match MetadataHandshake::deserialise(&msg_bytes.to_vec()) {
+                Ok((Some(v), r)) => {
+                    log!("Got handshake!");
+                    Ok((Some(MetadataMessage::MetadataHandshake(v)), rem.to_vec()))},
+                Ok((None, _)) => {
+                    log!("Did not parse handshake");
+                    Ok((None, raw.to_vec()))},
                 Err(e) => {
-                    log_err!("{:?}\nMessage: {:?}", e, msg_bytes);
+                    log_err!(
+                        "{:?}\nMessage: {:?}\nUTF8: {}\n",
+                        e,
+                        msg_bytes,
+                        String::from_utf8_lossy(&msg_bytes)
+                    );
                     Err(())
                 }
             };
@@ -319,11 +329,16 @@ impl Deserialisable for MetadataMessage {
                 let total_size: usize = v.total_size.try_into().unwrap();
                 v.data = raw[bencode_end..total_size].to_vec();
                 let rem = raw[total_size..].to_vec();
-                
+
                 Ok((Some(MetadataMessage::MetadataResponse(v)), rem))
             }
             Err(e) => {
-                log_err!("{:?}\nMessage: {:?}\nUTF8: {}\n", e, raw, String::from_utf8_lossy(&raw));
+                log_err!(
+                    "{:?}\nMessage: {:?}\nUTF8: {}\n",
+                    e,
+                    raw,
+                    String::from_utf8_lossy(&raw)
+                );
                 Err(())
             }
         };
@@ -338,47 +353,95 @@ pub struct MetadataHandshake {
     pub size: u32,
 }
 
-impl FromBencode for MetadataHandshake {
-    fn decode_bencode_object(object: bendy::decoding::Object) -> Result<Self, DecError>
+// TODO: Make this a parse utility
+impl Deserialisable for MetadataHandshake {
+    fn deserialise(raw: &Vec<u8>) -> Result<(Option<Self>, Vec<u8>), ()>
     where
         Self: Sized,
     {
-        let mut msg_code: Option<u32> = None;
-        let mut size: Option<u32> = None;
+        let key = b"metadata_size";
+        let s = String::from_utf8_lossy(raw);
+        log!("{:?}", s);
+        let md_size_key = match raw.windows(key.len()).position(|w| w == key) {
+            Some(v) => v + key.len(), // Add key.len() to search from after the key
+            None => return Err(()),
+        };
 
-        let mut dict = object.try_into_dictionary()?;
+        let md_size_start = match raw[md_size_key..].iter().position(|&v| v == b'i') {
+            Some(v) => v + md_size_key, // Add md_size_key offset to account for relative position
+            None => return Err(()),
+        };
+        let md_size_end = match raw[md_size_key..].iter().position(|&v| v == b'e') {
+            Some(v) => v + md_size_key,
+            None => return Err(()),
+        };
 
-        while let Some(pair) = dict.next_pair()? {
-            match pair {
-                (b"metadata_size", v) => {
-                    size = u32::decode_bencode_object(v)
-                        .context("metadata_size")
-                        .map(Some)?;
-                }
-                (b"m", v) => {
-                    // Parse inner dictionary of extensions
-                    let mut ext_dict = v.try_into_dictionary()?;
-                    while let Some(pair_) = ext_dict.next_pair()? {
-                        match pair_ {
-                            (b"ut_metadata", val) => {
-                                msg_code = u32::decode_bencode_object(val)
-                                    .context("ut_metadata: msg_code")
-                                    .map(Some)?;
-                                break;
-                            }
-                            _ => continue,
-                        }
-                    }
-                }
-                _ => continue,
-            }
-        }
+        let md_size = match String::from_utf8((&raw[md_size_start + 1..md_size_end]).to_vec()) {
+            Ok(s) => match s.parse::<u32>() {
+                Ok(v) => v,
+                Err(_) => return Err(()),
+            },
+            Err(_) => return Err(()),
+        };
 
-        let size = size.ok_or_else(|| DecError::missing_field("size"))?;
-        let msg_code = msg_code.ok_or_else(|| DecError::missing_field("msg_code"))?;
-
-        Ok(Self { msg_code, size })
+        Ok((
+            Some(Self {
+                msg_code: 0,
+                size: md_size,
+            }),
+            Vec::new(),
+        ))
     }
+    // fn decode_bencode_object(object: bendy::decoding::Object) -> Result<Self, DecError>
+    // where
+    //     Self: Sized,
+    // {
+    //     let mut msg_code: Option<u32> = None;
+    //     let mut size: Option<u32> = None;
+
+    //     let mut dict = object.try_into_dictionary()?;
+    //     let mut errs = 0;
+    //     while errs < 10 {
+    //         let pair = dict.next_pair();
+    //         let pair = match pair {
+    //             Ok(Some(val)) => val,
+    //             Ok(None) => break,
+    //             Err(e) => {
+    //                 log_err!("Got: {:?}, skipping", e);
+    //                 errs += 1;
+    //                 continue;
+    //             },
+    //         };
+    //         match pair {
+    //             (b"metadata_size", v) => {
+    //                 size = u32::decode_bencode_object(v)
+    //                     .context("metadata_size")
+    //                     .map(Some)?;
+    //             }
+    //             (b"m", v) => {
+    //                 // Parse inner dictionary of extensions
+    //                 let mut ext_dict = v.try_into_dictionary()?;
+    //                 while let Some(pair_) = ext_dict.next_pair()? {
+    //                     match pair_ {
+    //                         (b"ut_metadata", val) => {
+    //                             msg_code = u32::decode_bencode_object(val)
+    //                                 .context("ut_metadata: msg_code")
+    //                                 .map(Some)?;
+    //                             break;
+    //                         }
+    //                         _ => continue,
+    //                     }
+    //                 }
+    //             }
+    //             _ => continue,
+    //         }
+    //     }
+
+    //     let size = size.ok_or_else(|| DecError::missing_field("size"))?;
+    //     let msg_code = msg_code.ok_or_else(|| DecError::missing_field("msg_code"))?;
+
+    //     Ok(Self { msg_code, size })
+    // }
 }
 
 impl ToBencode for MetadataHandshake {
@@ -519,8 +582,16 @@ mod test {
 
         let parsed_msg = parsed_msg.expect(&format!("Got None when parsing {} message", msg_type));
 
-        assert_eq!(msg, &parsed_msg, "Got different result when deserialising {} message", msg_type);
-        assert!(rem.is_empty(), "Got non-empty remainder when deserialising {} message", msg_type);
+        assert_eq!(
+            msg, &parsed_msg,
+            "Got different result when deserialising {} message",
+            msg_type
+        );
+        assert!(
+            rem.is_empty(),
+            "Got non-empty remainder when deserialising {} message",
+            msg_type
+        );
     }
 
     // Verifies that parsing a message, then serialising it preserves the original bytes
@@ -534,7 +605,11 @@ mod test {
 
         let all_bytes = [msg_bytes, rem].concat();
 
-        assert_eq!(raw, &all_bytes, "Got different result when serialising {} message", msg_type);
+        assert_eq!(
+            raw, &all_bytes,
+            "Got different result when serialising {} message",
+            msg_type
+        );
     }
 
     #[test]
@@ -562,18 +637,34 @@ mod test {
     #[test]
     pub fn parse_then_serialise_other() {
         let raw: Vec<u8> = vec![
-            100, 49, 58, 101, 105, 48, 101, 52, 58, 105, 112, 118, 52, 52, 58, 69, 176, 168, 52,
-            49, 50, 58, 99, 111, 109, 112, 108, 101, 116, 101, 95, 97, 103, 111, 105, 52, 101, 49,
-            58, 109, 100, 49, 49, 58, 117, 112, 108, 111, 97, 100, 95, 111, 110, 108, 121, 105, 51,
-            101, 49, 50, 58, 117, 116, 95, 104, 111, 108, 101, 112, 117, 110, 99, 104, 105, 52,
-            101, 49, 49, 58, 117, 116, 95, 109, 101, 116, 97, 100, 97, 116, 97, 105, 50, 101, 54,
-            58, 117, 116, 95, 112, 101, 120, 105, 49, 101, 49, 50, 58, 117, 116, 95, 114, 101, 99,
-            111, 109, 109, 101, 110, 100, 105, 53, 101, 49, 48, 58, 117, 116, 95, 99, 111, 109,
-            109, 101, 110, 116, 105, 54, 101, 101, 49, 51, 58, 109, 101, 116, 97, 100, 97, 116, 97,
-            95, 115, 105, 122, 101, 105, 50, 52, 51, 48, 54, 101, 49, 58, 112, 105, 50, 48, 51, 52,
-            52, 101, 52, 58, 114, 101, 113, 113, 105, 50, 53, 53, 101, 49, 58, 118, 49, 51, 58,
-            194, 181, 84, 111, 114, 114, 101, 110, 116, 32, 51, 46, 50, 54, 58, 121, 111, 117, 114,
-            105, 112, 52, 58, 80, 1, 160, 54, 101,
+            0, 0, 1, 1, 20, 0, 100, 49, 58, 101, 105, 48, 101, 52, 58, 105, 112, 118, 52, 52, 58,
+            70, 70, 33, 242, 52, 58, 105, 112, 118, 54, 49, 54, 58, 38, 4, 61, 8, 148, 130, 213, 0,
+            0, 0, 0, 0, 0, 0, 84, 194, 49, 50, 58, 99, 111, 109, 112, 108, 101, 116, 101, 95, 97,
+            103, 111, 105, 49, 48, 101, 49, 58, 109, 100, 49, 49, 58, 117, 112, 108, 111, 97, 100,
+            95, 111, 110, 108, 121, 105, 51, 101, 49, 49, 58, 108, 116, 95, 100, 111, 110, 116,
+            104, 97, 118, 101, 105, 55, 101, 49, 50, 58, 117, 116, 95, 104, 111, 108, 101, 112,
+            117, 110, 99, 104, 105, 52, 101, 49, 49, 58, 117, 116, 95, 109, 101, 116, 97, 100, 97,
+            116, 97, 105, 50, 101, 54, 58, 117, 116, 95, 112, 101, 120, 105, 49, 101, 49, 48, 58,
+            117, 116, 95, 99, 111, 109, 109, 101, 110, 116, 105, 54, 101, 101, 49, 51, 58, 109,
+            101, 116, 97, 100, 97, 116, 97, 95, 115, 105, 122, 101, 105, 49, 55, 50, 56, 53, 101,
+            49, 58, 112, 105, 50, 51, 50, 56, 51, 101, 52, 58, 114, 101, 113, 113, 105, 50, 53, 53,
+            101, 49, 58, 118, 49, 53, 58, 206, 188, 84, 111, 114, 114, 101, 110, 116, 32, 51, 46,
+            52, 46, 50, 50, 58, 121, 112, 105, 52, 53, 55, 54, 56, 101, 54, 58, 121, 111, 117, 114,
+            105, 112, 52, 58, 80, 1, 160, 54, 101, 0, 0, 0, 105, 5, 255, 223, 191, 255, 253, 255,
+            255, 255, 239, 223, 255, 255, 223, 255, 255, 255, 255, 255, 255, 127, 255, 255, 255,
+            255, 255, 246, 255, 255, 255, 255, 255, 255, 239, 255, 255, 253, 255, 255, 255, 255,
+            255, 255, 254, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            255, 255, 255, 255, 255, 239, 255, 255, 123, 255, 255, 251, 255, 255, 255, 239, 255,
+            255, 255, 223, 255, 255, 255, 255, 255, 255, 255, 239, 251, 255, 127, 253, 255, 255,
+            255, 255, 255, 255, 255, 254, 255, 255, 255, 239, 255, 255, 128, 0, 0, 0, 5, 4, 0, 0,
+            0, 74, 0, 0, 0, 5, 4, 0, 0, 1, 30, 0, 0, 0, 5, 4, 0, 0, 3, 7, 0, 0, 0, 5, 4, 0, 0, 0,
+            204, 0, 0, 0, 5, 4, 0, 0, 0, 67, 0, 0, 0, 5, 4, 0, 0, 1, 243, 0, 0, 0, 5, 4, 0, 0, 3,
+            35, 0, 0, 0, 5, 4, 0, 0, 1, 87, 0, 0, 0, 5, 4, 0, 0, 2, 8, 0, 0, 0, 5, 4, 0, 0, 2, 163,
+            0, 0, 0, 5, 4, 0, 0, 2, 173, 0, 0, 0, 5, 4, 0, 0, 0, 38, 0, 0, 0, 5, 4, 0, 0, 2, 184,
+            0, 0, 0, 5, 4, 0, 0, 1, 3, 0, 0, 0, 5, 4, 0, 0, 0, 10, 0, 0, 0, 5, 4, 0, 0, 0, 152, 0,
+            0, 0, 5, 4, 0, 0, 2, 37, 0, 0, 0, 5, 4, 0, 0, 2, 98, 0, 0, 0, 5, 4, 0, 0, 2, 67, 0, 0,
+            0, 5, 4, 0, 0, 0, 207, 0, 0, 0, 5, 4, 0, 0, 0, 98, 0, 0, 0, 5, 4, 0, 0, 2, 13, 0, 0, 0,
+            5, 4, 0, 0, 0, 17, 0, 0, 0, 5, 4, 0, 0, 2, 198,
         ];
 
         deserialise_then_serialise_preserves(&raw, "other");

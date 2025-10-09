@@ -68,8 +68,17 @@ impl TorrentProgress {
         name: String,
         selected: bool,
     ) -> Self {
-        let name = if name.len() > 25 { format!("{}...", name[..25].to_string()) } else { name };
-        TorrentProgress { rx_progress, rx_speed, name, selected }
+        let name = if name.len() > 25 {
+            format!("{}...", name[..25].to_string())
+        } else {
+            name
+        };
+        TorrentProgress {
+            rx_progress,
+            rx_speed,
+            name,
+            selected,
+        }
     }
 
     pub(crate) fn set_selected(&mut self, select: bool) {

@@ -1,7 +1,7 @@
 use super::PeerWireMessage;
 
 pub struct Bitfield {
-    pub bitfield: Vec<u8>
+    pub bitfield: Vec<u8>,
 }
 
 impl PeerWireMessage for Bitfield {

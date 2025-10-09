@@ -54,10 +54,9 @@ pub(crate) fn fuzzy_xor_distance(x: &Vec<u8>, y: &Vec<u8>) -> u32 {
     for v in x.iter().zip(y.iter()).map(|(a, b)| a ^ b) {
         if v == 0 {
             res += 8
-        }
-        else {
+        } else {
             res += v.leading_zeros();
-            break
+            break;
         }
     }
     return x.len() as u32 * 8 - res;
@@ -65,7 +64,7 @@ pub(crate) fn fuzzy_xor_distance(x: &Vec<u8>, y: &Vec<u8>) -> u32 {
 
 pub(crate) fn addr_from_bytes(bytes: &[u8]) -> Result<SocketAddrV4, ()> {
     if bytes.len() < 6 {
-        return Err(())
+        return Err(());
     }
 
     let mut ip_raw = &bytes[..4];

@@ -8,7 +8,6 @@ use tokio::{
 
 use super::{Deserialisable, MessageRequest, Serialisable};
 
-
 pub struct ReadTask<T: Serialisable + Deserialisable + Send> {
     rd: ReadHalf<TcpStream>,
     buf: Vec<u8>,
@@ -80,6 +79,8 @@ impl<T: Serialisable + Deserialisable + Send> ReadTask<T> {
     }
 }
 
-pub(crate) async fn run_read_task<T: Serialisable + Deserialisable + Send>(mut read_task: ReadTask<T>) {
+pub(crate) async fn run_read_task<T: Serialisable + Deserialisable + Send>(
+    mut read_task: ReadTask<T>,
+) {
     read_task.read_socket_task().await;
 }

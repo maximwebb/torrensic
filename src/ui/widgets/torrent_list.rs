@@ -12,7 +12,6 @@ pub(crate) struct TorrentList {
     selected: bool,
 }
 
-
 impl Draw for TorrentList {
     fn draw<B: Backend>(&mut self, f: &mut Frame<B>, area: Rect) {
         let (title_area, body_areas) = Self::calculate_layout(self.torrents.len(), area);

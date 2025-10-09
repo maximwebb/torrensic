@@ -13,10 +13,8 @@ impl Draw for Title {
     fn draw<B: Backend>(&mut self, f: &mut Frame<B>, area: Rect) {
         let border = Block::default()
             .borders(Borders::ALL)
-            .border_style(
-                Style::default()
-                    .fg(Color::Blue)
-            ).border_type(BorderType::Thick);
+            .border_style(Style::default().fg(Color::Blue))
+            .border_type(BorderType::Thick);
         let title = Paragraph::new("TORRENSIC")
             .bold()
             .alignment(Alignment::Center);

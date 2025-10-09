@@ -15,16 +15,18 @@ pub(crate) async fn run(
 ) -> Result<(), Box<dyn std::error::Error>> {
     loop {
         let (tx, rx) = oneshot::channel();
-        let _ = tx_admin_message.send(AdminMessage::NodeAddressRequest(NodeAddressRequest {
-            chan: tx,
-        })).await;
+        let _ = tx_admin_message
+            .send(AdminMessage::NodeAddressRequest(NodeAddressRequest {
+                chan: tx,
+            }))
+            .await;
 
         let addr = match rx.await? {
             Some(v) => v,
             None => {
                 log!("Got None when requesting node address, exiting");
                 break;
-            },
+            }
         };
 
         let resp = super::make_req(&msg_bytes, &addr).await?;
@@ -34,18 +36,24 @@ pub(crate) async fn run(
             None => continue,
         };
 
-        let GetPeersResponse{ peers, id, nodes } = match MagnetMessage::<GetPeersResponse>::from_bencode(&resp) {
-            Ok(v) => v.payload,
-            Err(e) => {
-                log_err!("Error parsing response: {}", e.to_string());
-                continue;
-            }
-        };
+        let GetPeersResponse { peers, id, nodes } =
+            match MagnetMessage::<GetPeersResponse>::from_bencode(&resp) {
+                Ok(v) => v.payload,
+                Err(e) => {
+                    log_err!("Error parsing response: {}", e.to_string());
+                    continue;
+                }
+            };
 
         let (tx, rx) = oneshot::channel();
-        let _ = tx_admin_message.send(AdminMessage::AddressList(AddressList {
-            ack: tx, peers, nodes, id
-        })).await;
+        let _ = tx_admin_message
+            .send(AdminMessage::AddressList(AddressList {
+                ack: tx,
+                peers,
+                nodes,
+                id,
+            }))
+            .await;
 
         let _ = rx.await?;
     }

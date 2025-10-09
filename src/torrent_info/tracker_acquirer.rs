@@ -1,7 +1,10 @@
-use crate::{log, parser::{
-    metadata::{get_urlenc_info_hash, read_metadata, Metadata},
-    tracker_info::TrackerInfo,
-}};
+use crate::{
+    log,
+    parser::{
+        metadata::{get_urlenc_info_hash, read_metadata, Metadata},
+        tracker_info::TrackerInfo,
+    },
+};
 
 use bendy::decoding::FromBencode;
 use byteorder::{BigEndian, ReadBytesExt};
@@ -13,7 +16,6 @@ use tokio::{net::UdpSocket, time::timeout};
 use urlencoding::encode_binary;
 
 use super::{TorrentInfo, TorrentInfoAcquirer};
-
 
 pub(crate) struct TrackerAcquirer {}
 
@@ -212,7 +214,7 @@ impl TorrentInfoAcquirer for TrackerAcquirer {
         Ok(TorrentInfo {
             md,
             init_peers: tracker_info.peers,
-            peers_chan: None
+            peers_chan: None,
         })
     }
 }

@@ -7,9 +7,9 @@ use enum_dispatch::enum_dispatch;
 use crate::parser::magnet_message::MetadataHandshake;
 
 use self::{
-    bitfield::Bitfield, cancel::Cancel, choke::Choke, extended::Extended, have::Have, interested::Interested,
-    keep_alive::KeepAlive, not_interested::NotInterested, piece::Piece, request::Request,
-    unchoke::Unchoke,
+    bitfield::Bitfield, cancel::Cancel, choke::Choke, extended::Extended, have::Have,
+    interested::Interested, keep_alive::KeepAlive, not_interested::NotInterested, piece::Piece,
+    request::Request, unchoke::Unchoke,
 };
 
 use super::connection::{Deserialisable, Serialisable};
@@ -91,27 +91,27 @@ impl Deserialisable for Message {
         if raw.len() < 4 {
             return Ok((None, raw.to_vec()));
         }
-    
+
         let mut len_prefix: &[u8] = &raw[0..4];
         let len_prefix: u32 = len_prefix.read_u32::<BigEndian>().unwrap();
-    
+
         if len_prefix > 200_000 {
             return Err(());
         }
-    
+
         if len_prefix + 4 > raw.len().try_into().unwrap() {
             return Ok((None, raw.to_vec()));
         }
-    
+
         // Capture remaining bytes
         let msg_len: usize = (len_prefix + 4).try_into().unwrap();
         let rem = raw[msg_len..].to_vec();
-    
+
         let id: u8 = match len_prefix {
             0 => return Ok((Some(Message::from(KeepAlive {})), rem)),
             _ => raw[4],
         };
-    
+
         match id {
             0 => {
                 if len_prefix != 1 {
@@ -161,11 +161,11 @@ impl Deserialisable for Message {
                 let mut index = &raw[5..9];
                 let mut begin = &raw[9..13];
                 let mut length = &raw[13..17];
-    
+
                 let index = index.read_u32::<BigEndian>().unwrap();
                 let begin = begin.read_u32::<BigEndian>().unwrap();
                 let length = length.read_u32::<BigEndian>().unwrap();
-    
+
                 return Ok((
                     Some(Message::from(Request {
                         index,
@@ -179,14 +179,14 @@ impl Deserialisable for Message {
                 if len_prefix < 10 {
                     return Err(());
                 }
-    
+
                 let mut index = &raw[5..9];
                 let mut begin = &raw[9..13];
                 let block = raw[13..].to_vec();
-    
+
                 let index = index.read_u32::<BigEndian>().unwrap();
                 let begin = begin.read_u32::<BigEndian>().unwrap();
-    
+
                 return Ok((
                     Some(Message::from(Piece {
                         index,
@@ -203,11 +203,11 @@ impl Deserialisable for Message {
                 let mut index = &raw[5..9];
                 let mut begin = &raw[9..13];
                 let mut length = &raw[13..17];
-    
+
                 let index = index.read_u32::<BigEndian>().unwrap();
                 let begin = begin.read_u32::<BigEndian>().unwrap();
                 let length = length.read_u32::<BigEndian>().unwrap();
-    
+
                 return Ok((
                     Some(Message::from(Cancel {
                         index,
@@ -217,20 +217,20 @@ impl Deserialisable for Message {
                     rem,
                 ));
             }
-            20 => {
-                let end: usize = (len_prefix + 6).try_into().unwrap();
-                let raw = &raw[6..end];
-                
-                return match MetadataHandshake::from_bencode(&raw) {
-                    Ok(inner) => Ok((
-                        Some(Message::from(Extended{
-                            inner
-                        })),
-                        rem
-                    )),
-                    Err(_) => Err(()),
-                }
-            }
+            // 20 => {
+            //     let end: usize = (len_prefix + 6).try_into().unwrap();
+            //     let raw = &raw[6..end];
+
+            //     return match MetadataHandshake::from_bencode(&raw) {
+            //         Ok(inner) => Ok((
+            //             Some(Message::from(Extended{
+            //                 inner
+            //             })),
+            //             rem
+            //         )),
+            //         Err(_) => Err(()),
+            //     }
+            // }
             _ => Err(()),
         }
     }

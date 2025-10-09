@@ -9,14 +9,10 @@ use tokio::{
 use crate::{
     builder::file_builder,
     parser::{metadata::Metadata, tracker_info::PeerInfo},
-    utils::{self, ring_buffer::RingBuffer}
+    utils::{self, ring_buffer::RingBuffer},
 };
 
-use super::{
-    admin_message::AdminMessage,
-    peer_handler::PeerHandler,
-    strategy::Strategy,
-};
+use super::{admin_message::AdminMessage, peer_handler::PeerHandler, strategy::Strategy};
 
 pub(crate) type BitVecMutex = Arc<Mutex<BitVec<u8, Msb0>>>;
 
@@ -114,10 +110,8 @@ impl Manager {
             }
         }
     }
-
 }
 
 pub(crate) async fn run_peer_manager_task(mut peer_manager: Manager) {
     peer_manager.run().await;
 }
-

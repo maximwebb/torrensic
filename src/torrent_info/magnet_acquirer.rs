@@ -1,9 +1,12 @@
-mod peer_acquirer;
 mod admin_message;
+mod peer_acquirer;
 
 use core::num;
 use std::{
-    collections::HashSet, net::{Ipv4Addr, SocketAddrV4}, sync::Arc, time::Duration
+    collections::HashSet,
+    net::{Ipv4Addr, SocketAddrV4},
+    sync::Arc,
+    time::Duration,
 };
 
 use bendy::{decoding::FromBencode, encoding::ToBencode};
@@ -12,11 +15,25 @@ use rand::{rngs::StdRng, Rng, SeedableRng};
 use tokio::{net::UdpSocket, select, sync::mpsc, time::timeout};
 
 use crate::{
-    client::{peer_handler::{connection::Connection, message::{extended::Extended, Message}}, ProtocolError::TorrentInfoAcquireFailed}, log, log_err, log_warn, parser::{magnet_message::{Endpoint, GetPeers, GetPeersResponse, MagnetMessage, MetadataMessage, MetadataRequest, Ping}, metadata::Metadata}, utils
+    client::{
+        peer_handler::{
+            connection::Connection,
+            message::{extended::Extended, Message},
+        },
+        ProtocolError::TorrentInfoAcquireFailed,
+    },
+    log, log_err, log_warn,
+    parser::{
+        magnet_message::{
+            Endpoint, GetPeers, GetPeersResponse, MagnetMessage, MetadataMessage, MetadataRequest,
+            Ping,
+        },
+        metadata::Metadata,
+    },
+    utils,
 };
 
 use super::{TorrentInfo, TorrentInfoAcquirer};
-
 
 async fn make_req(
     msg_bytes: &Vec<u8>,
@@ -289,10 +306,12 @@ impl MagnetAcquirer {
         ];
 
         return MagnetAcquirer {
-            bootstrap_nodes: Arc::new(endpoints
-                .into_iter()
-                .map(|endpoint| endpoint.parse().unwrap())
-                .collect()),
+            bootstrap_nodes: Arc::new(
+                endpoints
+                    .into_iter()
+                    .map(|endpoint| endpoint.parse().unwrap())
+                    .collect(),
+            ),
         };
     }
 
@@ -336,7 +355,7 @@ impl MagnetAcquirer {
         &self,
         id: Vec<u8>,
         info_hash: Vec<u8>,
-        tx_peers: mpsc::Sender::<Vec<SocketAddrV4>>
+        tx_peers: mpsc::Sender<Vec<SocketAddrV4>>,
     ) -> Result<HashSet<SocketAddrV4>, ()> {
         let nodes: Vec<SocketAddrV4> = self.bootstrap_nodes.to_vec();
         let mut unvisited_nodes = PriorityQueue::new();
@@ -345,11 +364,11 @@ impl MagnetAcquirer {
         }
         let mut visited_nodes = HashSet::<SocketAddrV4>::new();
         let mut peers = HashSet::<SocketAddrV4>::new();
-        let max_peers = 100;
-        let num_workers = 5;
+        let max_peers = 1000;
+        let num_workers = 20;
 
         let (tx_admin_message, mut rx_admin_message) = mpsc::channel(128);
-        
+
         let get_peers = MagnetMessage::<GetPeers> {
             payload: GetPeers {
                 id,
@@ -367,12 +386,14 @@ impl MagnetAcquirer {
         for _ in 0..num_workers {
             let bytes = get_peers_bytes.clone();
             let tx = tx_admin_message.clone();
-            tokio::spawn(async { match peer_acquirer::run(bytes, tx).await {
-                Ok(_) => {},
-                Err(e) => {
-                    log!("Got err: {}", e);
-                },
-            } });
+            tokio::spawn(async {
+                match peer_acquirer::run(bytes, tx).await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        log!("Got err: {}", e);
+                    }
+                }
+            });
         }
 
         loop {
@@ -398,7 +419,7 @@ impl MagnetAcquirer {
                                 );
                                 let _ = tx_peers.send(endpoints.clone().into_iter().collect()).await;
                                 peers.extend(endpoints);
-                        
+
                                 if peers.len() >= max_peers {
                                     break;
                                 }
@@ -432,20 +453,28 @@ impl MagnetAcquirer {
         Ok(peers)
     }
 
-    async fn acquire_metadata(&self, info_hash: Vec<u8>, rx_peers: &mut mpsc::Receiver::<Vec<SocketAddrV4>>) -> Result<Metadata, Box<dyn std::error::Error>> {
-        loop
-        {
-            let peers = rx_peers.recv().await.expect("Received invalid peer message");
+    async fn acquire_metadata(
+        &self,
+        info_hash: Vec<u8>,
+        rx_peers: &mut mpsc::Receiver<Vec<SocketAddrV4>>,
+    ) -> Result<Metadata, Box<dyn std::error::Error>> {
+        loop {
+            let peers = rx_peers
+                .recv()
+                .await
+                .expect("Received invalid peer message");
+
             for addr in peers {
                 let (tx_cancel, mut rx_cancel) = mpsc::channel::<()>(1);
 
-                let mut conn = match Connection::new(&addr.to_string(), &info_hash, tx_cancel, true).await {
-                    Ok(v) => v,
-                    Err(_) => {
-                        log_warn!("Failed to connect to {}", addr);
-                        continue;
-                    },
-                };
+                let mut conn =
+                    match Connection::new(&addr.to_string(), &info_hash, tx_cancel, true).await {
+                        Ok(v) => v,
+                        Err(_) => {
+                            log_warn!("Failed to connect to {}", addr);
+                            continue;
+                        }
+                    };
 
                 log!("Connected to {}", addr);
 
@@ -473,36 +502,27 @@ impl MagnetAcquirer {
                             size = Some(v.size);
                             log!("Got handshake, metadata size: {}", v.size);
                         }
-                        _ => continue
+                        _ => continue,
                     }
-                    let req = MetadataRequest{piece_index};
+                    let req = MetadataRequest { piece_index };
                     // log!("req_bytes: {}", String::from_utf8_lossy(&req_bytes));
                     // TODO MW: Why isn't MetadataMessage::from working?
                     conn.push(MetadataMessage::MetadataRequest(req)).await?;
                 }
             }
-
         }
-        
+
         todo!()
     }
 }
 
 // Responsive IP: 41.133.89.199:6881
 impl TorrentInfoAcquirer for MagnetAcquirer {
-    async fn acquire(
-        &self,
-        torrent: String,
-    ) -> Result<TorrentInfo, Box<dyn std::error::Error>> {
+    async fn acquire(&self, torrent: String) -> Result<TorrentInfo, Box<dyn std::error::Error>> {
         let id = self.acquire_node_hash().await?;
-        let info_hash = match parse_info_hash(&torrent) {
-            Some(v) => v,
-            None => {
-                return Err(Box::new(TorrentInfoAcquireFailed(
-                    "Failed to parse magnet link".to_owned(),
-                )))
-            }
-        };
+        let info_hash = parse_info_hash(&torrent).ok_or(Box::new(TorrentInfoAcquireFailed(
+            "Failed to parse magnet link".to_owned(),
+        )))?;
 
         let (tx_peers, mut rx_peers) = mpsc::channel::<Vec<SocketAddrV4>>(8);
 
@@ -519,11 +539,12 @@ impl TorrentInfoAcquirer for MagnetAcquirer {
         //         .join(", ")
         // );
 
-        let md = match self.acquire_metadata(info_hash, &mut rx_peers).await {
-            Ok(v) => v,
-            Err(e) => return Err(e),
-        };
+        let md = self.acquire_metadata(info_hash, &mut rx_peers).await?;
 
-        Ok(TorrentInfo{md, init_peers: Vec::new(), peers_chan: Some(rx_peers)})
+        Ok(TorrentInfo {
+            md,
+            init_peers: Vec::new(),
+            peers_chan: Some(rx_peers),
+        })
     }
 }

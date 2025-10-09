@@ -7,10 +7,11 @@ use crossterm::{
 
 use std::{
     cmp::{max, min},
+    collections::HashMap,
     error::Error,
     io,
     sync::Arc,
-    time::Duration, collections::HashMap,
+    time::Duration,
 };
 use tokio::sync::watch;
 
@@ -20,18 +21,20 @@ use ratatui::{
     Terminal,
 };
 
-use crate::{log, parser::{metadata::Metadata, tracker_info::PeerInfo}};
+use crate::{
+    log,
+    parser::{metadata::Metadata, tracker_info::PeerInfo},
+};
 
 use super::{
     components::{title::Title, torrent_progress::TorrentProgress},
-    data::{LatLon, get_ip_locations},
+    data::{get_ip_locations, LatLon},
     widgets::{
         map_info::MapInfo, panel_tabs::PanelTabs, pieces_info::PiecesInfo,
         torrent_desc::TorrentDesc, torrent_list::TorrentList,
     },
     Draw,
 };
-
 
 pub(crate) struct Controller {
     pub(crate) md: Arc<Metadata>,
@@ -64,7 +67,7 @@ impl Controller {
             rx_speed,
             selected_torrent: 0,
             panel_state: PanelState::Hidden,
-            ip_location_map: ip_location_map.into()
+            ip_location_map: ip_location_map.into(),
         }
     }
 

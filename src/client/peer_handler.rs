@@ -26,7 +26,6 @@ use crate::parser::metadata::Metadata;
 
 use connection::Connection;
 
-
 use super::admin_message::{
     AdminMessage, PeerBitfield, PeerDisconnect, PieceDownload, PieceIndexRequest,
 };
@@ -268,7 +267,10 @@ impl PeerHandler {
         }
     }
 
-    async fn send_interested(&mut self, conn: &mut Connection<Message>) -> Result<(), Box<dyn Error>> {
+    async fn send_interested(
+        &mut self,
+        conn: &mut Connection<Message>,
+    ) -> Result<(), Box<dyn Error>> {
         let interest_msg = Message::from(Interested {});
         return conn.push(interest_msg).await;
     }
@@ -291,7 +293,6 @@ impl PeerHandler {
     async fn start(mut proto_task: PeerHandler) {
         let _ = proto_task.run().await;
     }
-
 }
 
 fn bitvec_to_bytes(bits: &BitVec<u8, Msb0>) -> Vec<u8> {
