@@ -24,7 +24,7 @@ pub(crate) async fn run(
         let addr = match rx.await? {
             Some(v) => v,
             None => {
-                log!("Got None when requesting node address, exiting");
+                // log!("Got None when requesting node address, exiting");
                 break;
             }
         };

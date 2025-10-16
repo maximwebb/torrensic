@@ -1,6 +1,7 @@
 use std::{error::Error, fmt};
 
 pub mod admin_message;
+pub mod handshake_message;
 pub mod manager;
 pub mod peer_handler;
 mod strategy;

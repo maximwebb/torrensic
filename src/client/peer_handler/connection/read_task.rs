@@ -70,7 +70,7 @@ impl<T: Serialisable + Deserialisable + Send> ReadTask<T> {
                     }
                     Ok((None, rem)) => break rem,
                     Err(_) => {
-                        return;
+                        break Vec::new();
                     }
                 }
             };

@@ -1,4 +1,5 @@
 mod admin_message;
+mod magnet_socket_handler;
 mod peer_acquirer;
 
 use core::num;
@@ -12,24 +13,23 @@ use std::{
 use bendy::{decoding::FromBencode, encoding::ToBencode};
 use priority_queue::PriorityQueue;
 use rand::{rngs::StdRng, Rng, SeedableRng};
-use tokio::{net::UdpSocket, select, sync::mpsc, time::timeout};
+use tokio::{io, net::UdpSocket, select, sync::mpsc, time::timeout};
 
 use crate::{
     client::{
-        peer_handler::{
-            connection::Connection,
-            message::{extended::Extended, Message},
-        },
+        handshake_message::get_handshake_bytes,
+        peer_handler::connection::{Deserialisable, Serialisable},
         ProtocolError::TorrentInfoAcquireFailed,
     },
-    log, log_err, log_warn,
+    log, log_err,
     parser::{
         magnet_message::{
-            Endpoint, GetPeers, GetPeersResponse, MagnetMessage, MetadataMessage, MetadataRequest,
-            Ping,
+            Endpoint, GetPeers, GetPeersResponse, MagnetMessage, MetadataHandshake,
+            MetadataMessage, MetadataRequest, Ping,
         },
         metadata::Metadata,
     },
+    torrent_info::magnet_acquirer::magnet_socket_handler::MagnetSocketHandler,
     utils,
 };
 
@@ -136,174 +136,7 @@ pub(crate) struct MagnetAcquirer {
 
 impl MagnetAcquirer {
     pub(crate) fn new() -> Self {
-        let endpoints = vec![
-            "201.92.174.163:15375",
-            "37.14.4.86:33167",
-            "45.155.42.24:28402",
-            "54.234.214.165:6881",
-            "61.147.235.2:37461",
-            "80.1.160.54:3000",
-            "103.1.212.150:23756",
-            "102.212.228.48:26567",
-            "102.176.101.69:20756",
-            "102.70.12.105:8973",
-            "102.69.226.80:6881",
-            "101.189.203.117:54134",
-            "101.115.153.211:51207",
-            "94.140.11.119:45394",
-            "94.59.173.236:59848",
-            "93.65.240.70:65136",
-            "92.119.18.19:8999",
-            "91.196.221.245:45580",
-            "91.167.237.44:6881",
-            "90.203.191.149:50034",
-            "89.213.77.128:10648",
-            "89.169.8.178:16091",
-            "89.147.101.131:26089",
-            "89.134.5.17:21027",
-            "89.40.206.132:44545",
-            "88.250.196.37:64890",
-            "88.17.63.33:22123",
-            "86.153.198.245:6881",
-            "86.104.22.100:23343",
-            "86.94.235.186:16881",
-            "86.48.10.240:28174",
-            "86.5.131.87:62496",
-            "85.228.140.153:51413",
-            "85.139.196.218:51413",
-            "85.12.30.131:45406",
-            "84.239.41.6:18680",
-            "84.39.151.118:52338",
-            "84.17.51.94:41758",
-            "83.233.4.167:5846",
-            "83.109.18.89:64062",
-            "82.114.64.28:63949",
-            "80.6.38.219:6881",
-            "79.118.191.35:55567",
-            "79.117.225.135:54146",
-            "78.190.220.4:10502",
-            "78.131.65.239:64602",
-            "73.247.177.92:41880",
-            "73.65.4.123:44623",
-            "69.160.121.150:6881",
-            "66.54.123.0:6881",
-            "64.64.116.140:6881",
-            "58.167.166.57:6881",
-            "58.38.71.27:52000",
-            "50.64.48.102:6881",
-            "47.149.85.59:63059",
-            "47.72.203.4:16349",
-            "46.219.215.107:24949",
-            "45.226.98.146:56645",
-            "45.134.20.85:30765",
-            "45.126.169.83:10319",
-            "45.86.211.19:58403",
-            "45.86.210.29:6881",
-            "43.231.28.146:41417",
-            "41.208.191.23:57793",
-            "37.120.152.250:6877",
-            "37.106.66.234:10049",
-            "37.19.197.185:53310",
-            "31.209.236.33:38957",
-            "31.46.188.140:53464",
-            "31.44.143.225:65525",
-            "31.30.172.155:29601",
-            "31.11.71.223:34474",
-            "23.81.64.214:31868",
-            "14.192.208.152:40339",
-            "14.153.84.166:6881",
-            "5.193.21.163:52763",
-            "5.91.63.129:11786",
-            "5.13.131.29:21017",
-            "2.238.135.175:49443",
-            "2.218.57.86:6882",
-            "1.58.65.106:8999",
-            "223.233.83.253:38709",
-            "222.83.138.95:52000",
-            "222.65.86.165:52000",
-            "220.233.193.15:39748",
-            "219.74.71.214:16881",
-            "218.207.164.218:55245",
-            "217.132.198.68:22923",
-            "217.74.147.38:28532",
-            "217.8.12.10:56356",
-            "216.131.74.131:60680",
-            "212.234.220.34:54624",
-            "212.233.158.166:10795",
-            "212.85.161.215:1856",
-            "209.134.35.4:6881",
-            "207.232.29.61:38542",
-            "204.112.209.203:22116",
-            "203.40.29.248:51587",
-            "201.247.15.219:50177",
-            "198.54.134.146:56068",
-            "197.184.176.129:35782",
-            "197.91.217.133:14782",
-            "197.87.220.134:6881",
-            "197.3.200.76:53207",
-            "194.35.123.121:51712",
-            "194.35.122.87:23177",
-            "193.138.44.250:10405",
-            "193.36.224.59:14271",
-            "192.145.119.72:51413",
-            "192.0.201.228:28431",
-            "191.181.217.152:23198",
-            "191.181.217.152:16293",
-            "190.237.0.50:6882",
-            "190.234.178.173:5446",
-            "190.213.130.8:57266",
-            "190.213.34.232:62464",
-            "190.121.65.106:35296",
-            "189.190.224.132:54643",
-            "189.154.200.119:51413",
-            "189.153.151.202:18031",
-            "189.60.10.43:27790",
-            "188.126.89.80:32845",
-            "188.36.210.233:6881",
-            "188.30.87.8:6881",
-            "186.23.132.160:51413",
-            "186.13.38.150:51413",
-            "185.254.75.40:11329",
-            "185.245.87.188:7229",
-            "185.218.127.163:57591",
-            "185.216.146.248:51413",
-            "185.158.242.63:39072",
-            "185.93.1.193:16017",
-            "185.83.69.75:47479",
-            "185.21.217.5:32812",
-            "184.75.214.163:47118",
-            "184.22.103.3:12496",
-            "183.182.104.81:6881",
-            "182.177.33.144:6881",
-            "181.214.218.66:34254",
-            "181.214.167.196:46243",
-            "181.214.153.167:53264",
-            "181.188.37.175:18434",
-            "181.116.200.205:50263",
-            "181.91.84.58:19583",
-            "181.68.19.50:44776",
-            "180.190.218.154:16799",
-            "180.190.183.64:58596",
-            "180.140.124.3:45944",
-            "180.117.170.146:27505",
-            "180.74.216.28:19383",
-            "179.61.197.5:40277",
-            "179.60.72.246:37627",
-            "179.6.168.31:27457",
-            "178.220.255.230:25541",
-            "178.162.196.10:30814",
-            "177.33.139.10:54354",
-            "176.203.167.97:38429",
-            "176.116.244.55:57675",
-            "173.32.224.250:47265",
-            "171.22.106.144:16826",
-            "171.6.241.38:23570",
-            "162.156.201.81:50000",
-            "161.29.122.151:52123",
-            "161.8.69.207:52548",
-            "159.146.34.214:54932",
-            "157.97.121.123:49608",
-        ];
+        let endpoints = vec!["127.0.0.1:51413"];
 
         return MagnetAcquirer {
             bootstrap_nodes: Arc::new(
@@ -346,9 +179,10 @@ impl MagnetAcquirer {
 
             return Ok(compute_node_id(ip));
         }
-        Err(Box::new(TorrentInfoAcquireFailed(
-            "Could not determine our node ID from bootstrap nodes".to_owned(),
-        )))
+        // Err(Box::new(TorrentInfoAcquireFailed(
+        //     "Could not determine our node ID from bootstrap nodes".to_owned(),
+        // )))
+        Ok(compute_node_id(1380408026 as u32))
     }
 
     async fn acquire_peers(
@@ -378,10 +212,10 @@ impl MagnetAcquirer {
         let get_peers_bytes = Arc::new(get_peers.to_bencode().unwrap());
 
         // TODO REMOVE: start off with a known good IP
-        let init_ip1: SocketAddrV4 = "41.133.89.199:6881".parse().unwrap();
-        let init_ip2: SocketAddrV4 = "201.92.174.163:15375".parse().unwrap();
-        let init_ip2: SocketAddrV4 = "94.2.212.131:10982".parse().unwrap();
-        let _ = tx_peers.send(vec![init_ip1, init_ip2]).await;
+        let init_ip1: SocketAddrV4 = "127.0.0.1:51413".parse().unwrap();
+        // let init_ip2: SocketAddrV4 = "201.92.174.163:15375".parse().unwrap();
+        // let init_ip2: SocketAddrV4 = "94.2.212.131:10982".parse().unwrap();
+        let _ = tx_peers.send(vec![init_ip1]).await;
 
         for _ in 0..num_workers {
             let bytes = get_peers_bytes.clone();
@@ -457,7 +291,7 @@ impl MagnetAcquirer {
         &self,
         info_hash: Vec<u8>,
         rx_peers: &mut mpsc::Receiver<Vec<SocketAddrV4>>,
-    ) -> Result<Metadata, Box<dyn std::error::Error>> {
+    ) -> io::Result<Metadata> {
         loop {
             let peers = rx_peers
                 .recv()
@@ -467,23 +301,40 @@ impl MagnetAcquirer {
             for addr in peers {
                 let (tx_cancel, mut rx_cancel) = mpsc::channel::<()>(1);
 
-                let mut conn =
-                    match Connection::new(&addr.to_string(), &info_hash, tx_cancel, true).await {
-                        Ok(v) => v,
-                        Err(_) => {
-                            log_warn!("Failed to connect to {}", addr);
-                            continue;
-                        }
-                    };
+                let mut sock_handler = MagnetSocketHandler::try_new(&addr.to_string()).await?;
 
-                log!("Connected to {}", addr);
+                log!("[{}] Connected", addr);
 
-                let mut size: Option<u32> = None;
+                let handshake_resp = sock_handler.handshake(&info_hash).await?;
+
+                log!(
+                    "[{}] Completed handshake - got: {}",
+                    addr,
+                    String::from_utf8_lossy(&handshake_resp)
+                );
+
+                let ext_handshake_resp_bytes = sock_handler.read().await?;
+                log!("{}", String::from_utf8_lossy(&ext_handshake_resp_bytes));
+                let ext_handshake =
+                    MetadataHandshake::from_bencode(&ext_handshake_resp_bytes).unwrap();
+
+                log!("[{}] Got extension handshake: {:?}", addr, ext_handshake);
+
+                let size = ext_handshake.size;
+                let msg_code = ext_handshake.msg_code;
                 let mut piece_index: u32 = 0;
+                let mut received_bytes: u32 = 0;
 
                 loop {
-                    let msg = tokio::select! {
-                        v = conn.pop() => {
+                    log!("[{}] Requesting piece {}", addr, piece_index);
+
+                    let req_bytes =
+                        MetadataMessage::MetadataRequest(MetadataRequest { piece_index, msg_code })
+                            .serialise();
+                    sock_handler.write(&req_bytes).await?;
+
+                    let msg_bytes = tokio::select! {
+                        v = sock_handler.read() => {
                             match v {
                                 Ok(v) => v,
                                 Err(e) => {
@@ -497,18 +348,21 @@ impl MagnetAcquirer {
                         }
                     };
 
-                    match msg {
-                        MetadataMessage::MetadataHandshake(v) => {
-                            size = Some(v.size);
-                            log!("Got handshake, metadata size: {}", v.size);
-                        }
-                        _ => continue,
+                    let Ok((Some(MetadataMessage::MetadataResponse(response)), _)) = MetadataMessage::deserialise(&msg_bytes) else {
+                        log!("[{}] Got unknown message: {}", addr, String::from_utf8_lossy(&msg_bytes));
+                        continue;
+                    };                
+
+                    log!("[{}] Got response {:?}", addr, response);
+                    piece_index += 1;
+                    received_bytes += response.total_size;
+
+                    if received_bytes >= size {
+                        log!("[{}] Finished acquiring metadata", addr);
+                        break;
                     }
-                    let req = MetadataRequest { piece_index };
-                    // log!("req_bytes: {}", String::from_utf8_lossy(&req_bytes));
-                    // TODO MW: Why isn't MetadataMessage::from working?
-                    conn.push(MetadataMessage::MetadataRequest(req)).await?;
                 }
+
             }
         }
 
