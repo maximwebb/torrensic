@@ -29,12 +29,8 @@ use crate::{
 
 
     [ ] ----> START WRITING acquire_metadata()
-    [x] Create more versatile connection/read_task that allows arbitrary message trait
+    [ ] Fix MetadataResponse deserialisation - use decoder.next_object(), determine # bytes consumed, and parse remainder of slice as binary data
     [ ] Create PeerInfoFeed in MagnetAcquirer and return from new/getPeerInfoFeed
-    [x] Update unvisited nodes to priority q
-    [x] Organise magnet_acquirer
-    [x] Add channels for communicating newly discovered peers out
-    [ ] Write magnet metadata acquirer
     [ ] Can we simplify other bencoding code with emit_pair_with?
     [ ] Make logic for parsing metadata handshake into parsing utility (i.e. for extracting value of bencoded key/val)
     [ ] Remove extended from Message?
@@ -43,7 +39,8 @@ use crate::{
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     log!("Started program");
     // let torrent_file = String::from("torrents/homeowners.torrent");
-    let magnet_link = String::from("magnet:?xt=urn:btih:040fd66a35e4f8cde5813dd288f4fcc3f33dfb7b");
+    // let magnet_link = String::from("magnet:?xt=urn:btih:3ac100e71c570bcc6a88cc7acd89dacedf0b5558"); // stew
+    let magnet_link = String::from("magnet:?xt=urn:btih:4a6b46d36598207dcd863153b112d149e13143da"); // wordle
     let output_dir = String::from("downloads");
 
     let magnet_acquirer = MagnetAcquirer::new();

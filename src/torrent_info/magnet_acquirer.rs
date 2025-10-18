@@ -24,8 +24,7 @@ use crate::{
     log, log_err,
     parser::{
         magnet_message::{
-            Endpoint, GetPeers, GetPeersResponse, MagnetMessage, MetadataHandshake,
-            MetadataMessage, MetadataRequest, Ping,
+            serialise_magnet_msg, Endpoint, GetPeers, GetPeersResponse, MagnetMessage, MetadataHandshake, MetadataRequest, MetadataResponse, Ping
         },
         metadata::Metadata,
     },
@@ -327,10 +326,13 @@ impl MagnetAcquirer {
 
                 loop {
                     log!("[{}] Requesting piece {}", addr, piece_index);
+                    let req = MetadataRequest {
+                        piece_index,
+                        msg_code,
+                    };
 
-                    let req_bytes =
-                        MetadataMessage::MetadataRequest(MetadataRequest { piece_index, msg_code })
-                            .serialise();
+
+                    let req_bytes = serialise_magnet_msg(&req, msg_code);
                     sock_handler.write(&req_bytes).await?;
 
                     let msg_bytes = tokio::select! {
@@ -348,12 +350,21 @@ impl MagnetAcquirer {
                         }
                     };
 
-                    let Ok((Some(MetadataMessage::MetadataResponse(response)), _)) = MetadataMessage::deserialise(&msg_bytes) else {
-                        log!("[{}] Got unknown message: {}", addr, String::from_utf8_lossy(&msg_bytes));
+                    let Ok((Some(response), _)) = MetadataResponse::deserialise(&msg_bytes) else {
+                        log!(
+                            "[{}] Got unknown message: {}",
+                            addr,
+                            String::from_utf8_lossy(&msg_bytes)
+                        );
                         continue;
-                    };                
+                    };
 
                     log!("[{}] Got response {:?}", addr, response);
+                    log!(
+                        "[{}] Parsed response.data {}",
+                        addr,
+                        String::from_utf8_lossy(&response.data)
+                    );
                     piece_index += 1;
                     received_bytes += response.total_size;
 
@@ -362,7 +373,6 @@ impl MagnetAcquirer {
                         break;
                     }
                 }
-
             }
         }
 

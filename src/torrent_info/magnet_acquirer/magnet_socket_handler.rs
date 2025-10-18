@@ -31,7 +31,7 @@ impl MagnetSocketHandler {
 
             if len <= 1 {
                 log!("Got keepalive message, ignoring");
-                continue; 
+                continue;
             }
 
             let mut msg = vec![0u8; len as usize];
