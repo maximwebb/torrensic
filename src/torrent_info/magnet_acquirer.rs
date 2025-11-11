@@ -4,6 +4,7 @@ mod peer_acquirer;
 
 use core::num;
 use std::{
+    cmp::min,
     collections::HashSet,
     net::{Ipv4Addr, SocketAddrV4},
     sync::Arc,
@@ -17,16 +18,13 @@ use tokio::{io, net::UdpSocket, select, sync::mpsc, time::timeout};
 
 use crate::{
     client::{
-        handshake_message::get_handshake_bytes,
-        peer_handler::connection::{Deserialisable, Serialisable},
-        ProtocolError::TorrentInfoAcquireFailed,
+        ProtocolError::TorrentInfoAcquireFailed, handshake_message::get_handshake_bytes, peer_handler::connection::{Deserialisable, Serialisable}
     },
     log, log_err,
     parser::{
-        magnet_message::{
-            serialise_magnet_msg, Endpoint, GetPeers, GetPeersResponse, MagnetMessage, MetadataHandshake, MetadataRequest, MetadataResponse, Ping
-        },
-        metadata::Metadata,
+        file_info::FileInfo, magnet_message::{
+            Endpoint, GetPeers, GetPeersResponse, MagnetMessage, MetadataHandshake, MetadataRequest, MetadataResponse, Ping, serialise_magnet_msg
+        }, metadata::Metadata
     },
     torrent_info::magnet_acquirer::magnet_socket_handler::MagnetSocketHandler,
     utils,
@@ -322,7 +320,8 @@ impl MagnetAcquirer {
                 let size = ext_handshake.size;
                 let msg_code = ext_handshake.msg_code;
                 let mut piece_index: u32 = 0;
-                let mut received_bytes: u32 = 0;
+                let mut num_recv_bytes: u32 = 0;
+                let mut recv_bytes = Vec::new();
 
                 loop {
                     log!("[{}] Requesting piece {}", addr, piece_index);
@@ -330,7 +329,6 @@ impl MagnetAcquirer {
                         piece_index,
                         msg_code,
                     };
-
 
                     let req_bytes = serialise_magnet_msg(&req, msg_code);
                     sock_handler.write(&req_bytes).await?;
@@ -350,27 +348,37 @@ impl MagnetAcquirer {
                         }
                     };
 
-                    let Ok((Some(response), _)) = MetadataResponse::deserialise(&msg_bytes) else {
-                        log!(
-                            "[{}] Got unknown message: {}",
-                            addr,
-                            String::from_utf8_lossy(&msg_bytes)
-                        );
+                    let Ok(mut response) = MetadataResponse::deserialise(&msg_bytes) else {
+                        let s = String::from_utf8_lossy(&msg_bytes);
+                        log!("[{}] Got unknown message", addr);
                         continue;
                     };
 
-                    log!("[{}] Got response {:?}", addr, response);
+                    // log!("[{}] Got response {:?}", addr, response);
                     log!(
-                        "[{}] Parsed response.data {}",
+                        "[{}] Parsed response.payload (len={})",
                         addr,
-                        String::from_utf8_lossy(&response.data)
+                        response.payload.len()
                     );
                     piece_index += 1;
-                    received_bytes += response.total_size;
+                    num_recv_bytes += response.payload.len() as u32;
+                    recv_bytes.append(&mut response.payload);
 
-                    if received_bytes >= size {
+                    if num_recv_bytes >= size {
                         log!("[{}] Finished acquiring metadata", addr);
                         break;
+                    }
+                }
+
+                let r = String::from_utf8_lossy(&recv_bytes);
+                log!("Metadata bytes: {r:?}");
+
+                match FileInfo::from_bencode(&recv_bytes) {
+                    Ok(v) => {
+                        log!("Parsed file info: {v:?}");
+                    },
+                    Err(e) =>  {
+                        log!("Failed to parse: {:?}", e);
                     }
                 }
             }

@@ -6,10 +6,7 @@ use bendy::{
 };
 use byteorder::{BigEndian, ReadBytesExt};
 
-use crate::{
-    client::peer_handler::connection::{Deserialisable, Serialisable},
-    log_err, log_warn, utils,
-};
+use crate::utils;
 
 pub(crate) trait MagnetTopic {
     fn topic() -> String;
@@ -341,20 +338,26 @@ impl ToBencode for MetadataRequest {
     }
 }
 
-// Response message from a metadata request
+// Consists solely of the bencoded dictionary at the start of the metadata response
 #[derive(PartialEq, Debug)]
-pub struct MetadataResponse {
-    pub piece_index: u32,
-    pub total_size: u32,
-    pub data: Vec<u8>,
+pub(crate) struct MetadataResponseHeader {
+    piece: u32,
+    pub(crate) total_size: u32,
 }
 
-impl FromBencode for MetadataResponse {
+// Metadata response, including the actual byte data
+#[derive(PartialEq, Debug)]
+pub struct MetadataResponse {
+    pub header: MetadataResponseHeader,
+    pub payload: Vec<u8>,
+}
+
+impl FromBencode for MetadataResponseHeader {
     fn decode_bencode_object(object: bendy::decoding::Object) -> Result<Self, DecError>
     where
         Self: Sized,
     {
-        let mut piece_index: Option<u32> = None;
+        let mut piece: Option<u32> = None;
         let mut total_size: Option<u32> = None;
 
         let mut dict = object.try_into_dictionary()?;
@@ -362,9 +365,7 @@ impl FromBencode for MetadataResponse {
         while let Some(pair) = dict.next_pair()? {
             match pair {
                 (b"piece", v) => {
-                    piece_index = u32::decode_bencode_object(v)
-                        .context("piece index")
-                        .map(Some)?;
+                    piece = u32::decode_bencode_object(v).context("piece").map(Some)?;
                 }
                 (b"total_size", v) => {
                     total_size = u32::decode_bencode_object(v)
@@ -375,24 +376,20 @@ impl FromBencode for MetadataResponse {
             }
         }
 
-        let piece_index = piece_index.ok_or_else(|| DecError::missing_field("piece"))?;
-        let total_size = total_size.ok_or_else(|| DecError::missing_field("piece"))?;
+        let piece = piece.ok_or_else(|| DecError::missing_field("piece"))?;
+        let total_size = total_size.ok_or_else(|| DecError::missing_field("total_size"))?;
 
-        Ok(Self {
-            piece_index,
-            total_size,
-            data: Vec::new(),
-        })
+        Ok(Self { piece, total_size })
     }
 }
 
-impl ToBencode for MetadataResponse {
+impl ToBencode for MetadataResponseHeader {
     const MAX_DEPTH: usize = 3;
 
     fn encode(&self, encoder: SingleItemEncoder) -> Result<(), bendy::encoding::Error> {
         encoder.emit_dict(|mut e| {
             e.emit_pair(b"msg_type", 1)?;
-            e.emit_pair(b"piece", self.piece_index)?;
+            e.emit_pair(b"piece", self.piece)?;
             e.emit_pair(b"total_size", self.total_size)?;
             Ok(())
         })?;
@@ -400,38 +397,19 @@ impl ToBencode for MetadataResponse {
     }
 }
 
-impl Deserialisable for MetadataResponse {
-    fn deserialise(raw: &Vec<u8>) -> Result<(Option<Self>, Vec<u8>), ()>
-    where
-        Self: Sized,
-    {
-        let bencode_end = match raw
+impl MetadataResponse {
+    pub(crate) fn deserialise(raw: &Vec<u8>) -> Result<Self, DecError> {
+        let bencode_end = raw
             .windows(2)
             .enumerate()
-            .find(|(_, s)| b"ee" == s)
-            .map(|(idx, _)| idx)
-        {
-            Some(v) => v + 2,
-            None => return Err(()),
-        };
+            .find(|(_, v)| v == b"ee")
+            .map(|(idx, _)| idx + 2)
+            .ok_or_else(|| DecError::missing_field("Could not find bencoded dict end"))?;
 
-        return match MetadataResponse::from_bencode(raw) {
-            Ok(mut v) => {
-                let total_size: usize = v.total_size.try_into().unwrap();
-                v.data = raw[bencode_end..].to_vec();
+        let header = MetadataResponseHeader::from_bencode(&raw[..bencode_end])?;
 
-                Ok((Some(v), Vec::new()))
-            }
-            Err(e) => {
-                log_err!(
-                    "{:?}\nMessage: {:?}\nUTF8: {}\n",
-                    e,
-                    raw,
-                    String::from_utf8_lossy(&raw)
-                );
-                Err(())
-            }
-        };
+        let payload = raw[bencode_end..].to_vec();
+        Ok(MetadataResponse { header, payload })
     }
 }
 

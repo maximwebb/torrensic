@@ -8,9 +8,8 @@ use urlencoding::encode_binary;
 
 use super::file_info::FileInfo;
 
-pub(crate) struct Metadata {
-    pub announce: Option<String>,
-    pub announce_list: Vec<Vec<String>>,
+pub struct Metadata {
+    pub announce_list: Vec<String>,
     pub info: FileInfo,
     pub info_hash: Vec<u8>,
 }
@@ -22,8 +21,7 @@ impl FromBencode for Metadata {
     where
         Self: Sized,
     {
-        let mut announce: Option<String> = None;
-        let mut announce_list: Option<Vec<Vec<String>>> = None;
+        let mut announce_list: Vec<String> = Vec::new();
         let mut info: Option<FileInfo> = None;
         let mut info_hash: Option<Vec<u8>> = None;
 
@@ -32,12 +30,15 @@ impl FromBencode for Metadata {
         while let Some(pair) = dict.next_pair()? {
             match pair {
                 (b"announce", val) => {
-                    announce = String::decode_bencode_object(val).context("announce").ok();
+                    let announce = String::decode_bencode_object(val).context("announce").unwrap();
+                    announce_list.push(announce);
                 }
                 (b"announce-list", val) => {
-                    announce_list = Vec::decode_bencode_object(val)
-                        .context("announce-list")
-                        .ok();
+                    let a_list : Vec<Vec<String>> = Vec::decode_bencode_object(val)
+                        .context("announce-list")?;
+
+                    let mut a_list = a_list.into_iter().flatten().collect();
+                    announce_list.append(&mut a_list);
                 }
                 (b"info", val) => {
                     let raw = val.try_into_dictionary()?.into_raw()?;
@@ -53,13 +54,10 @@ impl FromBencode for Metadata {
             }
         }
 
-        let announce_list =
-            announce_list.ok_or_else(|| DecError::missing_field("announce-list"))?;
         let info = info.ok_or_else(|| DecError::missing_field("info"))?;
         let info_hash = info_hash.ok_or_else(|| DecError::missing_field("info_hash"))?;
 
         Ok(Metadata {
-            announce,
             announce_list,
             info,
             info_hash,
@@ -72,11 +70,7 @@ impl ToBencode for Metadata {
 
     fn encode(&self, encoder: bendy::encoding::SingleItemEncoder) -> Result<(), EncError> {
         encoder.emit_dict(|mut e| {
-            match &self.announce {
-                Some(announce) => e.emit_pair(b"announce", announce)?,
-                None => {}
-            };
-            e.emit_pair(b"announce-list", &self.announce_list)?;
+            e.emit_pair(b"announce-list", &vec![self.announce_list.clone()])?;
             e.emit_pair(b"info", &self.info)
         })?;
 
@@ -85,22 +79,26 @@ impl ToBencode for Metadata {
 }
 
 impl Metadata {
+    pub fn has_announce(&self) -> bool {
+        !self.announce_list.is_empty()
+    }
+
     pub fn num_pieces(&self) -> usize {
-        return self.info.pieces.len() / 20;
+        self.info.pieces.len() / 20
     }
 
     pub fn num_blocks(&self) -> u32 {
-        return (self.info.piece_length / (2 << 13)).try_into().unwrap();
+        (self.info.piece_length / (2 << 13)).try_into().unwrap()
     }
 
     pub fn block_len(&self, index: u32, block_index: u32) -> u32 {
         if index + 1 < self.num_pieces().try_into().unwrap() || block_index + 1 < self.num_blocks()
         {
-            return 2 << 13;
+            2 << 13
         } else {
             let total_size = self.info.files.iter().map(|f| f.length).sum::<u32>();
             let block_size = (index * self.info.piece_length) + (self.num_blocks() - 1) * (2 << 13);
-            return total_size - block_size;
+            total_size - block_size
         }
     }
 }

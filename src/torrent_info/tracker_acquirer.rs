@@ -24,7 +24,6 @@ impl TrackerAcquirer {
         md: &Metadata,
     ) -> Result<TrackerInfo, Box<dyn std::error::Error>> {
         for tracker in &md.announce_list {
-            let tracker = &tracker[0];
             let req = if tracker.starts_with("http") {
                 Self::req_http_tracker_info(tracker, md).await
             } else {

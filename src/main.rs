@@ -22,7 +22,8 @@ use crate::{
 };
 
 /*
-    TODO FOR NEXT TIME: Continue testing custom bencode key parser (write unit test for key extraction), maybe extract into separate utility. Test full metadata protocol.
+    TODO FOR NEXT TIME: We seem to receive all the bytes for our metadata now, and can receive multiple messages from a peer. 
+    We now need to finally parse the Metadata object - investigate why this is not working
 
     https://www.bittorrent.org/beps/bep_0010.html (extended)
     https://www.bittorrent.org/beps/bep_0009.html (metadata)
@@ -39,6 +40,7 @@ use crate::{
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     log!("Started program");
     // let torrent_file = String::from("torrents/homeowners.torrent");
+    // $ transmission-cli -w . wordle.torrent
     // let magnet_link = String::from("magnet:?xt=urn:btih:3ac100e71c570bcc6a88cc7acd89dacedf0b5558"); // stew
     let magnet_link = String::from("magnet:?xt=urn:btih:4a6b46d36598207dcd863153b112d149e13143da"); // wordle
     let output_dir = String::from("downloads");

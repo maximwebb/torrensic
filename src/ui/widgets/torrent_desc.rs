@@ -26,7 +26,7 @@ impl Draw for TorrentDesc {
             Line::from(""),
             Line::from(format!("Pieces: {}", self.md.num_pieces())),
             Line::from(""),
-            Line::from(format!("Tracker: {}", self.md.announce_list[0].join(""))),
+            Line::from(format!("Tracker: {}", self.md.announce_list.join(""))),
         ];
 
         let text = Paragraph::new(lines);
