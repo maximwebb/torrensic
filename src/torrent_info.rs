@@ -6,7 +6,6 @@ use crate::parser::{metadata::Metadata, tracker_info::PeerInfo};
 
 pub mod magnet_acquirer;
 pub mod peer_info_feed;
-pub mod tracker_acquirer;
 
 // TODO: should we change this to hashset?
 pub type PeerSet = Vec<SocketAddrV4>;

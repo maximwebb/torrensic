@@ -110,8 +110,8 @@ pub(crate) fn read_metadata(path: &String) -> Result<Metadata, DecError> {
     Ok(metadata)
 }
 
-pub(crate) fn get_urlenc_info_hash(metadata: &Metadata) -> Result<String, EncError> {
-    let bytes = metadata.info.to_bencode()?;
+pub(crate) fn get_urlenc_info_hash(info_hash: &Vec<u8>) -> Result<String, EncError> {
+    let bytes = info_hash.to_bencode()?;
 
     let mut hasher: Sha1 = Sha1::new();
     hasher.update(bytes);

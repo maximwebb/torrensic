@@ -1,51 +1,63 @@
-use crate::{
-    log,
-    parser::{
-        metadata::{get_urlenc_info_hash, read_metadata, Metadata},
-        tracker_info::TrackerInfo,
-    },
-};
+use std::{io::ErrorKind, net::SocketAddrV4, str::FromStr, time::Duration};
 
 use bendy::decoding::FromBencode;
 use byteorder::{BigEndian, ReadBytesExt};
 use rand::Rng;
 use reqwest::Client;
-use std::io::Error as IOError;
-use std::{io::ErrorKind, time::Duration};
 use tokio::{net::UdpSocket, time::timeout};
 use urlencoding::encode_binary;
 
-use super::{TorrentInfo, TorrentInfoAcquirer};
+use crate::{log, log_err, parser::{metadata::get_urlenc_info_hash, tracker_info::{PeerInfo, TrackerInfo}}, setup::PeerAcquirer};
 
-pub(crate) struct TrackerAcquirer {}
+pub struct TrackerPeerAcquirer {
+    announce_url_list: Vec<String>,
+    info_hash: Vec<u8>,
+}
 
-impl TrackerAcquirer {
-    pub(crate) async fn req_tracker_info(
-        md: &Metadata,
-    ) -> Result<TrackerInfo, Box<dyn std::error::Error>> {
-        for tracker in &md.announce_list {
+impl PeerAcquirer for TrackerPeerAcquirer {
+    async fn try_get_peers(&mut self) -> Option<Vec<SocketAddrV4>> {
+        for tracker in &self.announce_url_list {
             let req = if tracker.starts_with("http") {
-                Self::req_http_tracker_info(tracker, md).await
+                self.req_http_tracker_info(tracker).await
             } else {
-                Self::req_udp_tracker_info(tracker, md).await
+                self.req_udp_tracker_info(tracker).await
             };
 
             match req {
-                Ok(tracker_info) => return Ok(tracker_info),
+                Ok(tracker_info) => {
+                    let endpoints = tracker_info.peers
+                        .iter()
+                        .map(PeerInfo::to_string)
+                        .map(|v| SocketAddrV4::from_str(v.as_str()).unwrap())
+                        .collect();
+                    return Some(endpoints)
+                }
                 Err(_) => continue,
             }
         }
-        return Err(Box::new(IOError::new(
-            ErrorKind::NotConnected,
-            "Failed to retrieve tracker info",
-        )));
+
+        log_err!("Failed to retrieve tracker info");
+        None
+    }
+
+    async fn get_peers(&mut self) -> Vec<SocketAddrV4> {
+        todo!()
+    }
+}
+
+impl TrackerPeerAcquirer {
+    pub fn new(announce_url_list: Vec<String>, info_hash: Vec<u8>) -> Self {
+        Self {
+            announce_url_list,
+            info_hash,
+        }
     }
 
     async fn req_http_tracker_info(
+        &self,
         tracker_url: &String,
-        md: &Metadata,
     ) -> Result<TrackerInfo, Box<dyn std::error::Error>> {
-        let hash = get_urlenc_info_hash(&md).unwrap();
+        let hash = get_urlenc_info_hash(&self.info_hash).unwrap();
         let peer_id = encode_binary(b"-TO0000-0123456789AB");
         let port = String::from("3000");
         let url = format!("{tracker_url}?info_hash={hash}&peer_id={peer_id}");
@@ -66,14 +78,14 @@ impl TrackerAcquirer {
     }
 
     async fn req_udp_tracker_info(
+        &self,
         tracker_url: &String,
-        md: &Metadata,
     ) -> Result<TrackerInfo, Box<dyn std::error::Error>> {
         let url = url::Url::parse(tracker_url).unwrap();
         let addr = match url.socket_addrs(|| None) {
             Ok(v) => v[0],
             Err(_) => {
-                return Err(Box::new(IOError::new(
+                return Err(Box::new(std::io::Error::new(
                     ErrorKind::InvalidInput,
                     "Invalid tracker url: {tracker_url}",
                 )));
@@ -95,7 +107,7 @@ impl TrackerAcquirer {
 
         match timeout(Duration::from_millis(timeout_duration), resp).await {
             Err(_) => {
-                return Err(Box::new(IOError::new(
+                return Err(Box::new(std::io::Error::new(
                     ErrorKind::TimedOut,
                     "Timeout when attempting to perform UDP tracker handshake with {tracker_url} after {duration}ms",
                 )));
@@ -112,13 +124,13 @@ impl TrackerAcquirer {
         let conn_id_recv = conn_id_recv.read_u64::<BigEndian>()?;
 
         if action_recv != 0 || trans_id_recv != trans_id {
-            return Err(Box::new(IOError::new(
+            return Err(Box::new(std::io::Error::new(
                 ErrorKind::InvalidData,
                 "Invalid response from server",
             )));
         }
 
-        let announce_msg = Self::announce_msg(md, conn_id_recv, trans_id, None);
+        let announce_msg = self.announce_msg(conn_id_recv, trans_id, None);
 
         loop {
             let _ = socket.send(&announce_msg).await?;
@@ -142,7 +154,7 @@ impl TrackerAcquirer {
             return Ok(res);
         }
 
-        return Err(Box::new(IOError::new(
+        return Err(Box::new(std::io::Error::new(
             ErrorKind::NotConnected,
             "Failed to Connect",
         )));
@@ -161,21 +173,23 @@ impl TrackerAcquirer {
     }
 
     fn announce_msg(
-        md: &Metadata,
+        &self,
         conn_id: u64,
         trans_id: u32,
         peer_id: Option<Vec<u8>>,
     ) -> Vec<u8> {
         let action: u32 = 1;
-        let info_hash = &md.info_hash;
+        let info_hash = &self.info_hash.to_vec();
         let peer_id = match peer_id {
             None => b"-TO0000-0123456789AB".to_vec(),
             Some(v) => v,
         };
         let downloaded: u64 = 0;
 
-        let _num_pieces: u64 = md.info.pieces.len().try_into().unwrap();
-        let left: u64 = (md.info.piece_length as u64 * _num_pieces).into();
+        // TODO MW: How to do this without metadata?
+        // let _num_pieces: u64 = md.info.pieces.len().try_into().unwrap();
+        // let left: u64 = (md.info.piece_length as u64 * _num_pieces).into();
+        let left: u64 = 0;
         let uploaded: u64 = 0;
         let event: u32 = 0;
         let ip: u32 = 0;
@@ -199,21 +213,5 @@ impl TrackerAcquirer {
             port.to_be_bytes().to_vec(),
         ]
         .concat()
-    }
-}
-
-impl TorrentInfoAcquirer for TrackerAcquirer {
-    async fn acquire(
-        &self,
-        torrent_file: String,
-    ) -> Result<TorrentInfo, Box<dyn std::error::Error>> {
-        let md = read_metadata(&torrent_file).unwrap();
-        let tracker_info = TrackerAcquirer::req_tracker_info(&md).await?;
-
-        Ok(TorrentInfo {
-            md,
-            init_peers: tracker_info.peers,
-            peers_chan: None,
-        })
     }
 }

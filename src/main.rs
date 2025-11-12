@@ -1,6 +1,7 @@
 mod builder;
 mod client;
 mod parser;
+mod setup;
 mod torrent_info;
 mod ui;
 mod utils;
@@ -12,8 +13,7 @@ use client::manager::run_peer_manager_task;
 use tokio::{self, sync::watch};
 
 use torrent_info::{
-    magnet_acquirer::MagnetAcquirer, tracker_acquirer::TrackerAcquirer, TorrentInfo,
-    TorrentInfoAcquirer,
+    magnet_acquirer::MagnetAcquirer, TorrentInfo, TorrentInfoAcquirer,
 };
 
 use crate::{
@@ -22,9 +22,9 @@ use crate::{
 };
 
 /*
-    TODO FOR NEXT TIME: We seem to receive all the bytes for our metadata now, and can receive multiple messages from a peer. 
-    We now need to finally parse the Metadata object - investigate why this is not working
-
+    TODO FOR NEXT TIME: We can now parse FileInfo. Since we are sometimes able to get a tracker from the magnet url,
+    refactor magnet_acquirer and tracker_acquirer to "do less stuff" - i.e. we should have a dht_peer_acquirer, a tracker_peer_acquirer,
+    a magnet_metadata_acquirer and a file_metadata_acquirer - built from traits PeerAcquirer and MetadataAcquirer
     https://www.bittorrent.org/beps/bep_0010.html (extended)
     https://www.bittorrent.org/beps/bep_0009.html (metadata)
 
