@@ -1,31 +1,35 @@
 use std::time::Duration;
 
 use bendy::decoding::FromBencode;
-use tokio::{io, sync::mpsc, time::{sleep, timeout}};
+use tokio::{
+    io,
+    sync::mpsc,
+    time::{sleep, timeout},
+};
 
 use crate::{log, log_err, log_warn, parser::file_info::FileInfo};
 
 use super::PeerAcquirer;
 
-use messages::{MetadataHandshake, MetadataRequest, MetadataResponse, serialise_magnet_msg};
+use messages::{serialise_magnet_msg, MetadataHandshake, MetadataRequest, MetadataResponse};
 use socket_handler::MagnetSocketHandler;
 
 mod messages;
 mod socket_handler;
 
 pub struct MagnetTorrentInfoAcquirer {
-    info_hash: Vec<u8>
+    info_hash: Vec<u8>,
 }
 
 impl MagnetTorrentInfoAcquirer {
     pub fn new(info_hash: Vec<u8>) -> Self {
-        Self {
-            info_hash
-        }
+        Self { info_hash }
     }
 
-    pub async fn get_torrent_info(&self, peer_acquirer: &mut impl PeerAcquirer) -> io::Result<FileInfo>
-    {
+    pub async fn get_torrent_info(
+        &self,
+        peer_acquirer: &mut impl PeerAcquirer,
+    ) -> io::Result<FileInfo> {
         loop {
             let peers = peer_acquirer
                 .try_get_peers()
@@ -35,7 +39,8 @@ impl MagnetTorrentInfoAcquirer {
             for addr in peers {
                 let (tx_cancel, mut rx_cancel) = mpsc::channel::<()>(1);
 
-                let Ok(mut sock_handler) = MagnetSocketHandler::try_new(&addr.to_string()).await else {
+                let Ok(mut sock_handler) = MagnetSocketHandler::try_new(&addr.to_string()).await
+                else {
                     log_warn!("Failed to connect to peer");
                     continue;
                 };
@@ -58,13 +63,20 @@ impl MagnetTorrentInfoAcquirer {
                     continue;
                 };
 
-                let Ok(ext_handshake) =
-                    MetadataHandshake::from_bencode(&ext_handshake_resp_bytes) else {
-                        log_warn!("Failed to parse extension handshake response: {}", String::from_utf8_lossy(&ext_handshake_resp_bytes));
-                        continue;
-                    };
+                let Ok(ext_handshake) = MetadataHandshake::from_bencode(&ext_handshake_resp_bytes)
+                else {
+                    log_warn!(
+                        "Failed to parse extension handshake response: {}",
+                        String::from_utf8_lossy(&ext_handshake_resp_bytes)
+                    );
+                    continue;
+                };
 
-                log!("[{}] Completed extension handshake: {:?}", addr, ext_handshake);
+                log!(
+                    "[{}] Completed extension handshake: {:?}",
+                    addr,
+                    ext_handshake
+                );
 
                 let size = ext_handshake.size;
                 let msg_code = ext_handshake.msg_code;
@@ -82,22 +94,26 @@ impl MagnetTorrentInfoAcquirer {
                     let req_bytes = serialise_magnet_msg(&req, msg_code);
                     sock_handler.write(&req_bytes).await?;
 
-                    let msg_bytes = match timeout(Duration::from_millis(5000), sock_handler.read()).await {
-                        Ok(Ok(v)) => {
-                            v
-                        }
-                        Ok(Err(e)) => {
-                            log_err!("Got error: {e:?}");
-                            continue;
-                        }
-                        Err(_) => {
-                            log_warn!("Timed out when reading from socket, retrying...");
-                            continue;
-                        }
-                    };
+                    let msg_bytes =
+                        match timeout(Duration::from_millis(5000), sock_handler.read()).await {
+                            Ok(Ok(v)) => v,
+                            Ok(Err(e)) => {
+                                log_err!("Got error: {e:?}");
+                                continue;
+                            }
+                            Err(_) => {
+                                log_warn!("Timed out when reading from socket, retrying...");
+                                continue;
+                            }
+                        };
 
                     let Ok(mut response) = MetadataResponse::deserialise(&msg_bytes) else {
-                        log_warn!("[{}] Got unknown message (len {}): {}", addr, msg_bytes.len(), String::from_utf8_lossy(&msg_bytes));
+                        log_warn!(
+                            "[{}] Got unknown message (len {}): {}",
+                            addr,
+                            msg_bytes.len(),
+                            String::from_utf8_lossy(&msg_bytes)
+                        );
                         continue;
                     };
 
@@ -105,12 +121,14 @@ impl MagnetTorrentInfoAcquirer {
                         piece_index += 1;
                         num_recv_bytes += response.payload.len() as u32;
                         recv_bytes.append(&mut response.payload);
-                    }
-                    else {
-                        log_warn!("Got wrong piece - expected {}, got {}", piece_index, response.header.piece);
+                    } else {
+                        log_warn!(
+                            "Got wrong piece - expected {}, got {}",
+                            piece_index,
+                            response.header.piece
+                        );
                         continue;
                     }
-
 
                     if num_recv_bytes >= size {
                         log!("[{}] Finished acquiring metadata", addr);
@@ -121,12 +139,12 @@ impl MagnetTorrentInfoAcquirer {
                 match FileInfo::from_bencode(&recv_bytes) {
                     Ok(v) => {
                         return Ok(v);
-                    },
-                    Err(e) =>  {
+                    }
+                    Err(e) => {
                         log!("Failed to parse: {:?}", e);
                     }
                 }
             }
+        }
     }
-}
 }

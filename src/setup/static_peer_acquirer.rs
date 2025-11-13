@@ -3,14 +3,12 @@ use std::net::SocketAddrV4;
 use super::PeerAcquirer;
 
 pub struct StaticPeerAcquirer {
-    peers: Vec<SocketAddrV4>
+    peers: Vec<SocketAddrV4>,
 }
 
 impl StaticPeerAcquirer {
     pub fn new(peers: Vec<SocketAddrV4>) -> Self {
-        Self {
-            peers
-        }
+        Self { peers }
     }
 }
 

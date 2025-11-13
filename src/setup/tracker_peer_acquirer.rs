@@ -7,7 +7,14 @@ use reqwest::Client;
 use tokio::{net::UdpSocket, time::timeout};
 use urlencoding::encode_binary;
 
-use crate::{log, log_err, parser::{metadata::get_urlenc_info_hash, tracker_info::{PeerInfo, TrackerInfo}}, setup::PeerAcquirer};
+use crate::{
+    log, log_err,
+    parser::{
+        metadata::get_urlenc_info_hash,
+        tracker_info::{PeerInfo, TrackerInfo},
+    },
+    setup::PeerAcquirer,
+};
 
 pub struct TrackerPeerAcquirer {
     announce_url_list: Vec<String>,
@@ -25,12 +32,13 @@ impl PeerAcquirer for TrackerPeerAcquirer {
 
             match req {
                 Ok(tracker_info) => {
-                    let endpoints = tracker_info.peers
+                    let endpoints = tracker_info
+                        .peers
                         .iter()
                         .map(PeerInfo::to_string)
                         .map(|v| SocketAddrV4::from_str(v.as_str()).unwrap())
                         .collect();
-                    return Some(endpoints)
+                    return Some(endpoints);
                 }
                 Err(_) => continue,
             }
@@ -172,12 +180,7 @@ impl TrackerPeerAcquirer {
         .concat()
     }
 
-    fn announce_msg(
-        &self,
-        conn_id: u64,
-        trans_id: u32,
-        peer_id: Option<Vec<u8>>,
-    ) -> Vec<u8> {
+    fn announce_msg(&self, conn_id: u64, trans_id: u32, peer_id: Option<Vec<u8>>) -> Vec<u8> {
         let action: u32 = 1;
         let info_hash = &self.info_hash.to_vec();
         let peer_id = match peer_id {

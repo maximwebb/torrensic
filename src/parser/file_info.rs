@@ -3,7 +3,6 @@ use bendy::{
     encoding::{AsString, Error as EncError, SingleItemEncoder, ToBencode},
 };
 
-
 #[derive(Debug)]
 pub(crate) struct FileInfo {
     pub files: Vec<FilePathInfo>,
@@ -120,7 +119,6 @@ impl FromBencode for FilePathInfo {
     }
 }
 
-
 /////////////////
 // Encoding
 
@@ -155,4 +153,3 @@ impl ToBencode for FilePathInfo {
         Ok(())
     }
 }
-

@@ -1,10 +1,9 @@
 use std::{net::SocketAddrV4, time::Duration};
 
-use tokio::{net::UdpSocket, time::timeout};
 use rand::{rngs::StdRng, Rng, SeedableRng};
+use tokio::{net::UdpSocket, time::timeout};
 
 use crate::{log, log_err};
-
 
 pub(crate) async fn make_req(
     msg_bytes: &Vec<u8>,

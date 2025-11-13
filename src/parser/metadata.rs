@@ -30,12 +30,14 @@ impl FromBencode for Metadata {
         while let Some(pair) = dict.next_pair()? {
             match pair {
                 (b"announce", val) => {
-                    let announce = String::decode_bencode_object(val).context("announce").unwrap();
+                    let announce = String::decode_bencode_object(val)
+                        .context("announce")
+                        .unwrap();
                     announce_list.push(announce);
                 }
                 (b"announce-list", val) => {
-                    let a_list : Vec<Vec<String>> = Vec::decode_bencode_object(val)
-                        .context("announce-list")?;
+                    let a_list: Vec<Vec<String>> =
+                        Vec::decode_bencode_object(val).context("announce-list")?;
 
                     let mut a_list = a_list.into_iter().flatten().collect();
                     announce_list.append(&mut a_list);

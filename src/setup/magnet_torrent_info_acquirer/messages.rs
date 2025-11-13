@@ -1,4 +1,3 @@
-
 use std::net::SocketAddrV4;
 
 use bendy::{
@@ -415,5 +414,4 @@ impl MetadataResponse {
 }
 
 #[cfg(test)]
-mod test {
-}
+mod test {}
