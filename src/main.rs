@@ -2,7 +2,6 @@ mod builder;
 mod client;
 mod parser;
 mod setup;
-mod torrent_info;
 mod ui;
 mod utils;
 
