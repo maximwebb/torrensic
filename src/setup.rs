@@ -13,3 +13,4 @@ pub trait MetadataAcquirer {
 }
 
 pub mod tracker_peer_acquirer;
+pub mod dht_peer_acquirer;
