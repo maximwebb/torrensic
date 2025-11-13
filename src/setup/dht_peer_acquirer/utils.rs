@@ -31,9 +31,9 @@ pub(crate) async fn make_req(
     let mut buf = [0; 4096];
     let resp = socket.recv(&mut buf);
 
-    let len = match timeout(Duration::from_millis(500), resp).await {
+    let len = match timeout(Duration::from_millis(2000), resp).await {
         Err(_) => {
-            // log!("Timeout when attempting to perform UDP tracker handshake with {addr} after 500ms");
+            // log!("Timeout when attempting to perform UDP tracker handshake with {addr} after 2000ms");
             return Ok(None);
         }
         Ok(fut) => match fut {

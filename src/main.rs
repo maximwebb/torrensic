@@ -6,19 +6,15 @@ mod torrent_info;
 mod ui;
 mod utils;
 
-use std::sync::Arc;
+use std::{net::SocketAddrV4, str::FromStr, sync::Arc};
 
 use builder::file_builder;
 use client::manager::run_peer_manager_task;
 use tokio::{self, sync::watch};
 
-use torrent_info::{
-    magnet_acquirer::MagnetAcquirer, TorrentInfo, TorrentInfoAcquirer,
-};
 
 use crate::{
-    client::manager::Manager,
-    ui::controller::{run_controller_task, Controller},
+    client::manager::Manager, parser::metadata::{Metadata, read_metadata}, setup::{PeerAcquirer, dht_peer_acquirer::DhtPeerAcquirer, magnet_torrent_info_acquirer::MagnetTorrentInfoAcquirer, static_peer_acquirer::StaticPeerAcquirer, tracker_peer_acquirer::{self, TrackerPeerAcquirer}}, ui::controller::{Controller, run_controller_task}
 };
 
 /*
@@ -29,35 +25,52 @@ use crate::{
     https://www.bittorrent.org/beps/bep_0009.html (metadata)
 
 
-    [ ] ----> START WRITING acquire_metadata()
-    [ ] Fix MetadataResponse deserialisation - use decoder.next_object(), determine # bytes consumed, and parse remainder of slice as binary data
-    [ ] Create PeerInfoFeed in MagnetAcquirer and return from new/getPeerInfoFeed
-    [ ] Can we simplify other bencoding code with emit_pair_with?
-    [ ] Make logic for parsing metadata handshake into parsing utility (i.e. for extracting value of bencoded key/val)
-    [ ] Remove extended from Message?
+    [ ] Re-implement tracker and DHT-based peer acquisition in terms of PeerAcquirer trait (need to finish tidying up & adding try_get())
+    [ ] Re-implement file and magnet-based metadata acquisition in terms of MetadataAcquirer trait
+    [ ] Remove legacy files (i.e. torrent_info/)
+    [ ] Consider switching to mod.rs based structure
+    [ ] Test!
 */
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     log!("Started program");
     // let torrent_file = String::from("torrents/homeowners.torrent");
+    // let md = read_metadata(&torrent_file).unwrap();
+    // let mut peer_acquirer = TrackerPeerAcquirer::new(md.announce_list.clone(), md.info_hash.clone());
+
     // $ transmission-cli -w . wordle.torrent
-    // let magnet_link = String::from("magnet:?xt=urn:btih:3ac100e71c570bcc6a88cc7acd89dacedf0b5558"); // stew
-    let magnet_link = String::from("magnet:?xt=urn:btih:4a6b46d36598207dcd863153b112d149e13143da"); // wordle
+    let magnet_link = String::from("magnet:?xt=urn:btih:3ac100e71c570bcc6a88cc7acd89dacedf0b5558"); // stew
+    // let magnet_link = String::from("magnet:?xt=urn:btih:4a6b46d36598207dcd863153b112d149e13143da"); // wordle
+    // let magnet_link = String::from("magnet:?xt=urn:btih:D1AD4F4CCCC44E6227283BD334487E777EB88EDC&dn=American.Psycho.2000.Remastered.1080p.BluRay.X264.AC3.Wi&tr=http%3A%2F%2Fp4p.arenabg.com%3A1337%2Fannounce&tr=udp%3A%2F%2F47.ip-51-68-199.eu%3A6969%2Fannounce&tr=udp%3A%2F%2F9.rarbg.me%3A2780%2Fannounce&tr=udp%3A%2F%2F9.rarbg.to%3A2710%2Fannounce&tr=udp%3A%2F%2F9.rarbg.to%3A2730%2Fannounce&tr=udp%3A%2F%2F9.rarbg.to%3A2920%2Fannounce&tr=udp%3A%2F%2Fopen.stealth.si%3A80%2Fannounce&tr=udp%3A%2F%2Fopentracker.i2p.rocks%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.coppersurfer.tk%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.cyberia.is%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.dler.org%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.internetwarriors.net%3A1337%2Fannounce&tr=udp%3A%2F%2Ftracker.leechers-paradise.org%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.openbittorrent.com%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337&tr=udp%3A%2F%2Ftracker.pirateparty.gr%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.tiny-vps.com%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.torrent.eu.org%3A451%2Fannounce");
     let output_dir = String::from("downloads");
 
-    let magnet_acquirer = MagnetAcquirer::new();
+    let info_hash = setup::parse_info_hash(&magnet_link).unwrap();
 
-    let (md, init_peers, peers_chan) = match magnet_acquirer.acquire(magnet_link).await? {
-        TorrentInfo {
-            md,
-            init_peers,
-            peers_chan,
-        } => (
-            Arc::new(md),
-            Arc::new(init_peers),
-            peers_chan.and_then(|v| Some(Arc::new(v))),
-        ),
-    };
+    // let mut peer_acquirer = DhtPeerAcquirer::new(info_hash.clone());
+    let mut peer_acquirer = StaticPeerAcquirer::new(vec!["127.0.0.1:51413".parse().unwrap()]);
+
+    let torrent_info_acquirer = MagnetTorrentInfoAcquirer::new(info_hash.clone());
+
+    let torrent_info = torrent_info_acquirer.get_torrent_info(&mut peer_acquirer).await.unwrap();
+
+    log!("Got torrent info!");
+
+    // let peers = peer_acquirer.try_get_peers().await;
+    // log!("Got peers: {peers:?}");
+
+    // let magnet_acquirer = MagnetAcquirer::new();
+
+    // let (md, init_peers, peers_chan) = match magnet_acquirer.acquire(magnet_link).await? {
+    //     TorrentInfo {
+    //         md,
+    //         init_peers,
+    //         peers_chan,
+    //     } => (
+    //         Arc::new(md),
+    //         Arc::new(init_peers),
+    //         peers_chan.and_then(|v| Some(Arc::new(v))),
+    //     ),
+    // };
 
     // let info_acquirer = TrackerAcquirer {};
     // // TODO: await this in the manager function
@@ -73,40 +86,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //     ),
     // };
 
-    match file_builder::create(&md, &output_dir, true) {
-        Ok(_) => {}
-        Err(e) => {
-            log!("{:?}", e)
-        }
-    }
+    // match file_builder::create(&md, &output_dir, true) {
+    //     Ok(_) => {}
+    //     Err(e) => {
+    //         log!("{:?}", e)
+    //     }
+    // }
 
-    let (tx_progress, rx_progress) = watch::channel((0, 0));
-    let (tx_in_progress_pieces, rx_in_progress_pieces) =
-        watch::channel(vec![false; md.num_pieces()]);
-    let (tx_downloaded_pieces, rx_downloaded_pieces) = watch::channel(vec![false; md.num_pieces()]);
-    let (tx_speed, rx_speed) = watch::channel(0.0);
+    // let (tx_progress, rx_progress) = watch::channel((0, 0));
+    // let (tx_in_progress_pieces, rx_in_progress_pieces) =
+    //     watch::channel(vec![false; md.num_pieces()]);
+    // let (tx_downloaded_pieces, rx_downloaded_pieces) = watch::channel(vec![false; md.num_pieces()]);
+    // let (tx_speed, rx_speed) = watch::channel(0.0);
 
-    let peer_manager = Manager::new(
-        md.clone(),
-        init_peers.clone(),
-        &output_dir,
-        tx_progress,
-        tx_in_progress_pieces,
-        tx_downloaded_pieces,
-        tx_speed,
-    )?;
-    let ui_controller = Controller::new(
-        md.clone(),
-        init_peers.clone(),
-        rx_progress,
-        rx_in_progress_pieces,
-        rx_downloaded_pieces,
-        rx_speed,
-    )
-    .await;
+    // let peer_manager = Manager::new(
+    //     md.clone(),
+    //     init_peers.clone(),
+    //     &output_dir,
+    //     tx_progress,
+    //     tx_in_progress_pieces,
+    //     tx_downloaded_pieces,
+    //     tx_speed,
+    // )?;
+    // let ui_controller = Controller::new(
+    //     md.clone(),
+    //     init_peers.clone(),
+    //     rx_progress,
+    //     rx_in_progress_pieces,
+    //     rx_downloaded_pieces,
+    //     rx_speed,
+    // )
+    // .await;
 
-    tokio::spawn(run_peer_manager_task(peer_manager));
-    run_controller_task(ui_controller).await;
+    // tokio::spawn(run_peer_manager_task(peer_manager));
+    // run_controller_task(ui_controller).await;
 
     log!("Closed");
 
