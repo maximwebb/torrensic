@@ -7,6 +7,7 @@ use tokio::{
     time::timeout,
 };
 
+use crate::setup::magnet_link::InfoHash;
 use crate::{client::handshake_message::get_handshake_bytes, log};
 
 pub struct MagnetSocketHandler {
@@ -51,7 +52,7 @@ impl MagnetSocketHandler {
         Ok(())
     }
 
-    pub async fn handshake(&mut self, info_hash: &Vec<u8>) -> io::Result<Vec<u8>> {
+    pub async fn handshake(&mut self, info_hash: &InfoHash) -> io::Result<Vec<u8>> {
         let handshake_bytes = get_handshake_bytes(info_hash);
         let _ = self.socket.write(&handshake_bytes).await?;
 

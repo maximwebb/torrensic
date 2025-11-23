@@ -1,3 +1,5 @@
+use std::ops::Deref;
+
 use bendy::{
     decoding::{Error as DecError, FromBencode, ResultExt},
     encoding::{Error as EncError, ToBencode},
@@ -6,12 +8,14 @@ use bendy::{
 use sha1::{Digest, Sha1};
 use urlencoding::encode_binary;
 
+use crate::setup::magnet_link::InfoHash;
+
 use super::file_info::FileInfo;
 
 pub struct Metadata {
     pub announce_list: Vec<String>,
     pub info: FileInfo,
-    pub info_hash: Vec<u8>,
+    pub info_hash: InfoHash,
 }
 
 impl FromBencode for Metadata {
@@ -23,7 +27,7 @@ impl FromBencode for Metadata {
     {
         let mut announce_list: Vec<String> = Vec::new();
         let mut info: Option<FileInfo> = None;
-        let mut info_hash: Option<Vec<u8>> = None;
+        let mut info_hash: Option<InfoHash> = None;
 
         let mut dict = object.try_into_dictionary()?;
 
@@ -46,7 +50,8 @@ impl FromBencode for Metadata {
                     let raw = val.try_into_dictionary()?.into_raw()?;
                     let mut hasher: Sha1 = Sha1::new();
                     hasher.update(raw);
-                    info_hash = Some(hasher.finalize().to_vec());
+
+                    info_hash = Some(InfoHash::try_new_from_bytes(&hasher.finalize()).unwrap());
 
                     info = FileInfo::from_bencode(raw).context("info").ok();
                 }
@@ -112,8 +117,8 @@ pub(crate) fn read_metadata(path: &String) -> Result<Metadata, DecError> {
     Ok(metadata)
 }
 
-pub(crate) fn get_urlenc_info_hash(info_hash: &Vec<u8>) -> Result<String, EncError> {
-    let bytes = info_hash.to_bencode()?;
+pub(crate) fn get_urlenc_info_hash(info_hash: &InfoHash) -> Result<String, EncError> {
+    let bytes = info_hash.deref().to_bencode()?;
 
     let mut hasher: Sha1 = Sha1::new();
     hasher.update(bytes);

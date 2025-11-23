@@ -6,7 +6,7 @@ use bendy::{
 };
 use byteorder::{BigEndian, ReadBytesExt};
 
-use crate::utils;
+use crate::{setup::magnet_link::InfoHash, utils};
 
 pub(crate) trait MagnetTopic {
     fn topic() -> String;
@@ -96,7 +96,7 @@ impl ToBencode for Ping {
 #[derive(Clone)]
 pub(crate) struct GetPeers {
     pub id: Vec<u8>,
-    pub info_hash: Vec<u8>,
+    pub info_hash: InfoHash,
 }
 
 impl MagnetTopic for GetPeers {

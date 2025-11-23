@@ -7,7 +7,11 @@ use tokio::{
     time::{sleep, timeout},
 };
 
-use crate::{log, log_err, log_warn, parser::file_info::FileInfo};
+use crate::{
+    log, log_err, log_warn,
+    parser::file_info::FileInfo,
+    setup::{magnet_link::InfoHash, PeerAcquirerEnum},
+};
 
 use super::PeerAcquirer;
 
@@ -18,27 +22,25 @@ mod messages;
 mod socket_handler;
 
 pub struct MagnetTorrentInfoAcquirer {
-    info_hash: Vec<u8>,
+    info_hash: InfoHash,
 }
 
 impl MagnetTorrentInfoAcquirer {
-    pub fn new(info_hash: Vec<u8>) -> Self {
+    pub fn new(info_hash: InfoHash) -> Self {
         Self { info_hash }
     }
 
     pub async fn get_torrent_info(
         &self,
-        peer_acquirer: &mut impl PeerAcquirer,
+        peer_acquirer: &mut PeerAcquirerEnum,
     ) -> io::Result<FileInfo> {
         loop {
             let peers = peer_acquirer
                 .try_get_peers()
                 .await
-                .expect("Received invalid peer message");
+                .expect("Could not get peers");
 
-            for addr in peers {
-                let (tx_cancel, mut rx_cancel) = mpsc::channel::<()>(1);
-
+            for addr in peers.iter() {
                 let Ok(mut sock_handler) = MagnetSocketHandler::try_new(&addr.to_string()).await
                 else {
                     log_warn!("Failed to connect to peer");

@@ -14,6 +14,8 @@ use tokio::{
 
 use read_task::{run_read_task, ReadTask};
 
+use crate::setup::magnet_link::InfoHash;
+
 use self::handshake::handshake;
 
 // Move to common / networking mod (perhaps merge utils + this into common)
@@ -36,7 +38,7 @@ pub struct Connection<T: Serialisable + Deserialisable + Send + 'static> {
 impl<T: Serialisable + Deserialisable + Send + 'static> Connection<T> {
     pub(crate) async fn new(
         addr: &str,
-        info_hash: &Vec<u8>,
+        info_hash: &InfoHash,
         cancel_sender: mpsc::Sender<()>,
         req_metadata: bool,
     ) -> Result<Self, Box<dyn Error>> {
@@ -50,7 +52,7 @@ impl<T: Serialisable + Deserialisable + Send + 'static> Connection<T> {
         };
 
         let (mut rd, mut wr) = tokio::io::split(socket);
-        let rem = handshake(&info_hash, &mut rd, &mut wr, req_metadata).await?;
+        let rem = handshake(info_hash, &mut rd, &mut wr, req_metadata).await?;
 
         let (sender, receiver): (Sender<MessageRequest<T>>, Receiver<MessageRequest<T>>) =
             mpsc::channel(8);

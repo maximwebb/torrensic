@@ -1,6 +1,11 @@
-use std::net::SocketAddrV4;
+use std::{net::SocketAddrV4, ops::Deref};
 
-use crate::{log_err, parser::metadata::Metadata};
+use async_trait::async_trait;
+
+use crate::setup::{
+    dht_peer_acquirer::DhtPeerAcquirer, static_peer_acquirer::StaticPeerAcquirer,
+    tracker_peer_acquirer::TrackerPeerAcquirer,
+};
 
 pub mod dht_peer_acquirer;
 pub mod static_peer_acquirer;
@@ -8,45 +13,44 @@ pub mod tracker_peer_acquirer;
 
 pub mod magnet_torrent_info_acquirer;
 
-// TODO MW: Figure out API for requesting new peers
-pub trait PeerAcquirer {
-    async fn try_get_peers(&mut self) -> Option<Vec<SocketAddrV4>>;
+pub mod magnet_link;
 
-    async fn get_peers(&mut self) -> Vec<SocketAddrV4>;
+pub(crate) struct PeerList(pub Vec<SocketAddrV4>);
+
+impl Deref for PeerList {
+    type Target = Vec<SocketAddrV4>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
-pub fn parse_info_hash(link: &str) -> Option<Vec<u8>> {
-    if !link.starts_with("magnet:?") {
-        return None;
+unsafe impl Send for PeerList {}
+
+// TODO MW: Figure out API for requesting new peers
+#[async_trait]
+pub trait PeerAcquirer {
+    async fn try_get_peers(&mut self) -> Option<PeerList> {
+        None
     }
 
-    let pairs = link[8..].split('&');
-
-    for pair in pairs {
-        let mut splitter = pair.splitn(2, '=');
-        if splitter.next().unwrap() != "xt" {
-            continue;
-        }
-
-        let v = splitter.next().unwrap();
-        if !v.starts_with("urn:btih:") {
-            log_err!("Error: got unexpected value for xt in magnet link: {}", v);
-            continue;
-        }
-
-        let info_hash = v[9..].to_string();
-
-        if info_hash.len() != 40 {
-            log_err!(
-                "Error: got unexpected info hash length in magnet link: {}",
-                info_hash
-            );
-            continue;
-        }
-
-        let info_hash = hex::decode(info_hash).expect("Error: Invalid info hash");
-        return Some(info_hash);
+    async fn get_peers(&mut self) -> PeerList {
+        self.try_get_peers().await.unwrap()
     }
+}
 
-    return None;
+pub enum PeerAcquirerEnum {
+    Tracker(TrackerPeerAcquirer),
+    Dht(DhtPeerAcquirer),
+    Static(StaticPeerAcquirer),
+}
+
+impl PeerAcquirerEnum {
+    pub async fn try_get_peers(&mut self) -> Option<PeerList> {
+        match self {
+            PeerAcquirerEnum::Tracker(acquirer) => acquirer.try_get_peers().await,
+            PeerAcquirerEnum::Dht(acquirer) => acquirer.try_get_peers().await,
+            PeerAcquirerEnum::Static(acquirer) => acquirer.try_get_peers().await,
+        }
+    }
 }

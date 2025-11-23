@@ -1,5 +1,6 @@
-use std::{io::ErrorKind, net::SocketAddrV4, str::FromStr, time::Duration};
+use std::{collections::HashSet, io::ErrorKind, net::SocketAddrV4, str::FromStr, time::Duration};
 
+use async_trait::async_trait;
 use bendy::decoding::FromBencode;
 use byteorder::{BigEndian, ReadBytesExt};
 use rand::Rng;
@@ -8,22 +9,26 @@ use tokio::{net::UdpSocket, time::timeout};
 use urlencoding::encode_binary;
 
 use crate::{
-    log, log_err,
+    log, log_err, log_warn,
     parser::{
         metadata::get_urlenc_info_hash,
         tracker_info::{PeerInfo, TrackerInfo},
     },
-    setup::PeerAcquirer,
+    setup::{magnet_link::InfoHash, PeerAcquirer, PeerList},
 };
 
 pub struct TrackerPeerAcquirer {
     announce_url_list: Vec<String>,
-    info_hash: Vec<u8>,
+    info_hash: InfoHash,
 }
 
+#[async_trait]
 impl PeerAcquirer for TrackerPeerAcquirer {
-    async fn try_get_peers(&mut self) -> Option<Vec<SocketAddrV4>> {
-        for tracker in &self.announce_url_list {
+    async fn try_get_peers(&mut self) -> Option<PeerList> {
+        let mut to_remove = HashSet::new();
+        let mut res = None;
+        for tracker in self.announce_url_list.iter() {
+            log!("Requesting peers from {tracker}");
             let req = if tracker.starts_with("http") {
                 self.req_http_tracker_info(tracker).await
             } else {
@@ -38,23 +43,31 @@ impl PeerAcquirer for TrackerPeerAcquirer {
                         .map(PeerInfo::to_string)
                         .map(|v| SocketAddrV4::from_str(v.as_str()).unwrap())
                         .collect();
-                    return Some(endpoints);
+                    res = Some(PeerList(endpoints));
                 }
-                Err(_) => continue,
+                Err(_) => {
+                    to_remove.insert(tracker.clone());
+                    log_warn!("Removing tracker {tracker}");
+                }
             }
         }
 
-        log_err!("Failed to retrieve tracker info");
-        None
+        self.announce_url_list.retain(|v| !to_remove.contains(v));
+
+        if res.is_none() {
+            log_err!("Failed to retrieve tracker info");
+        }
+
+        return res;
     }
 
-    async fn get_peers(&mut self) -> Vec<SocketAddrV4> {
+    async fn get_peers(&mut self) -> PeerList {
         todo!()
     }
 }
 
 impl TrackerPeerAcquirer {
-    pub fn new(announce_url_list: Vec<String>, info_hash: Vec<u8>) -> Self {
+    pub fn new(announce_url_list: Vec<String>, info_hash: InfoHash) -> Self {
         Self {
             announce_url_list,
             info_hash,
@@ -80,7 +93,9 @@ impl TrackerPeerAcquirer {
             .bytes()
             .await?;
 
-        let tracker_info = TrackerInfo::from_bencode(&res).unwrap();
+        let tracker_info = TrackerInfo::from_bencode(&res).map_err(|e| {
+            std::io::Error::new(ErrorKind::InvalidInput, "Failed to parse tracker response")
+        })?;
 
         Ok(tracker_info)
     }
@@ -105,8 +120,9 @@ impl TrackerPeerAcquirer {
         let socket = UdpSocket::bind("0.0.0.0:3000").await?;
         socket.connect(addr).await?;
 
-        let mut rng = rand::thread_rng();
-        let trans_id: u32 = rng.gen();
+        // let mut rng = rand::thread_rng();
+        // let trans_id: u32 = rng.gen();
+        let trans_id = 618364956;
         let connect_msg = Self::connect_msg(trans_id);
         let _ = socket.send(&connect_msg).await?;
 

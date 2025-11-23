@@ -4,12 +4,16 @@ use std::{
     sync::Arc,
 };
 
+use async_trait::async_trait;
 use bendy::{decoding::FromBencode, encoding::ToBencode};
 use priority_queue::PriorityQueue;
 use rand::{seq::SliceRandom, thread_rng};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::client::ProtocolError::TorrentInfoAcquireFailed;
+use crate::{
+    client::ProtocolError::TorrentInfoAcquireFailed,
+    setup::{magnet_link::InfoHash, PeerList},
+};
 use crate::{
     log, log_err,
     parser::magnet_message::{Endpoint, GetPeers, GetPeersResponse, MagnetMessage, Ping},
@@ -23,24 +27,25 @@ pub struct DhtPeerAcquirer {
     rx_peers: mpsc::Receiver<SocketAddrV4>,
 }
 
+#[async_trait]
 impl PeerAcquirer for DhtPeerAcquirer {
-    async fn try_get_peers(&mut self) -> Option<Vec<SocketAddrV4>> {
+    async fn try_get_peers(&mut self) -> Option<PeerList> {
         let mut buffer = Vec::new();
         self.rx_peers.recv_many(&mut buffer, 128).await;
         if buffer.is_empty() {
             None
         } else {
-            Some(buffer)
+            Some(PeerList(buffer))
         }
     }
 
-    async fn get_peers(&mut self) -> Vec<SocketAddrV4> {
+    async fn get_peers(&mut self) -> PeerList {
         todo!()
     }
 }
 
 impl DhtPeerAcquirer {
-    pub fn new(info_hash: Vec<u8>) -> Self {
+    pub fn new(info_hash: InfoHash) -> Self {
         let mut endpoints = [
             "86.6.8.99:45074",
             "88.227.79.197:15229",
@@ -188,7 +193,7 @@ impl DhtPeerAcquirer {
 
     async fn acquire_peers_task(
         nodes: Vec<SocketAddrV4>,
-        info_hash: Vec<u8>,
+        info_hash: InfoHash,
         tx_peers: mpsc::Sender<SocketAddrV4>,
     ) -> Result<(), ()> {
         let node_hash = Self::acquire_node_hash(&nodes).await.unwrap();

@@ -6,6 +6,7 @@ use bendy::{
 };
 use byteorder::{BigEndian, ReadBytesExt};
 
+#[derive(Debug)]
 pub(crate) struct TrackerInfo {
     pub interval: u32,
     pub tracker_id: Option<String>,
@@ -44,7 +45,7 @@ impl FromBencode for TrackerInfo {
             }
         }
 
-        let interval = interval.ok_or_else(|| DecError::missing_field("interval"))?;
+        let interval = interval.unwrap_or(2000);
         let peers = peers.ok_or_else(|| DecError::missing_field("peers"))?;
 
         Ok(TrackerInfo {
@@ -110,7 +111,7 @@ impl TrackerInfo {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct PeerInfo {
     pub peer_id: Option<Vec<u8>>,
     pub ip: String,

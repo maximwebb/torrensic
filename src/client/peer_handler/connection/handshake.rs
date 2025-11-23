@@ -7,9 +7,10 @@ use tokio::{
 };
 
 use crate::client::handshake_message::get_handshake_bytes;
+use crate::setup::magnet_link::InfoHash;
 
 pub(crate) async fn handshake(
-    info_hash: &Vec<u8>,
+    info_hash: &InfoHash,
     rd: &mut ReadHalf<TcpStream>,
     wr: &mut WriteHalf<TcpStream>,
     _req_metadata: bool,

@@ -67,7 +67,7 @@ pub(crate) fn count_ones(v: &Vec<bool>) -> u32 {
     return v.iter().filter(|&&x| x).count().try_into().unwrap();
 }
 
-pub(crate) fn fuzzy_xor_distance(x: &Vec<u8>, y: &Vec<u8>) -> u32 {
+pub(crate) fn fuzzy_xor_distance(x: &[u8], y: &[u8]) -> u32 {
     if x.len() != y.len() {
         log!("Error: mismatched sizes (x: {}, y: {})", x.len(), y.len());
     }

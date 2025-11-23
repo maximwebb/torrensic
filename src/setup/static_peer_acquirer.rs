@@ -1,5 +1,9 @@
 use std::net::SocketAddrV4;
 
+use async_trait::async_trait;
+
+use crate::setup::PeerList;
+
 use super::PeerAcquirer;
 
 pub struct StaticPeerAcquirer {
@@ -12,12 +16,13 @@ impl StaticPeerAcquirer {
     }
 }
 
+#[async_trait]
 impl PeerAcquirer for StaticPeerAcquirer {
-    async fn try_get_peers(&mut self) -> Option<Vec<SocketAddrV4>> {
-        Some(self.peers.clone())
+    async fn try_get_peers(&mut self) -> Option<PeerList> {
+        Some(PeerList(self.peers.clone()))
     }
 
-    async fn get_peers(&mut self) -> Vec<SocketAddrV4> {
-        todo!()
+    async fn get_peers(&mut self) -> PeerList {
+        PeerList(self.peers.clone())
     }
 }
