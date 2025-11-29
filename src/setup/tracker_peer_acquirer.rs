@@ -1,9 +1,8 @@
-use std::{collections::HashSet, io::ErrorKind, net::SocketAddrV4, str::FromStr, time::Duration};
+use std::{collections::HashSet, io::ErrorKind, net::{Ipv4Addr, SocketAddrV4}, str::FromStr, time::Duration};
 
 use async_trait::async_trait;
 use bendy::decoding::FromBencode;
 use byteorder::{BigEndian, ReadBytesExt};
-use rand::Rng;
 use reqwest::Client;
 use tokio::{net::UdpSocket, time::timeout};
 use urlencoding::encode_binary;
@@ -12,7 +11,7 @@ use crate::{
     log, log_err, log_warn,
     parser::{
         metadata::get_urlenc_info_hash,
-        tracker_info::{PeerInfo, TrackerInfo},
+        tracker_info::TrackerInfo,
     },
     setup::{magnet_link::InfoHash, PeerAcquirer, PeerList},
 };
@@ -37,13 +36,18 @@ impl PeerAcquirer for TrackerPeerAcquirer {
 
             match req {
                 Ok(tracker_info) => {
-                    let endpoints = tracker_info
+                    let endpoints : Vec<SocketAddrV4> = tracker_info
                         .peers
                         .iter()
-                        .map(PeerInfo::to_string)
-                        .map(|v| SocketAddrV4::from_str(v.as_str()).unwrap())
+                        .filter_map(|v| {
+                            let ip = Ipv4Addr::from_str(&v.ip).ok().filter(|ip| !ip.is_unspecified())?;
+                            Some(SocketAddrV4::new(ip, v.port))
+                        })
                         .collect();
-                    res = Some(PeerList(endpoints));
+                    if !endpoints.is_empty() {
+                        res = Some(PeerList(endpoints));
+                        break;
+                    }
                 }
                 Err(_) => {
                     to_remove.insert(tracker.clone());
