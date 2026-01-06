@@ -12,7 +12,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::{
     client::ProtocolError::TorrentInfoAcquireFailed,
-    setup::{magnet_link::InfoHash, PeerList},
+    setup::{PeerList, magnet_link::InfoHash}, utils::logger::Logger,
 };
 use crate::{
     log, log_err,
@@ -25,6 +25,7 @@ mod utils;
 
 pub struct DhtPeerAcquirer {
     rx_peers: mpsc::Receiver<SocketAddrV4>,
+    logger: Arc<Logger>,
 }
 
 #[async_trait]
@@ -45,7 +46,7 @@ impl PeerAcquirer for DhtPeerAcquirer {
 }
 
 impl DhtPeerAcquirer {
-    pub fn new(info_hash: InfoHash) -> Self {
+    pub fn new(info_hash: InfoHash, logger: &Arc<Logger>) -> Self {
         let mut endpoints = [
             "86.6.8.99:45074",
             "88.227.79.197:15229",
@@ -141,11 +142,13 @@ impl DhtPeerAcquirer {
 
         let (tx_peers, mut rx_peers) = mpsc::channel::<SocketAddrV4>(1024);
 
+        let logger_copy = logger.clone();
+
         let _ = tokio::spawn(async move {
-            Self::acquire_peers_task(bootstrap_nodes, info_hash, tx_peers).await
+            Self::acquire_peers_task(bootstrap_nodes, info_hash, tx_peers, logger_copy).await
         });
 
-        DhtPeerAcquirer { rx_peers }
+        DhtPeerAcquirer { rx_peers, logger: logger.clone() }
     }
 }
 
@@ -195,6 +198,7 @@ impl DhtPeerAcquirer {
         nodes: Vec<SocketAddrV4>,
         info_hash: InfoHash,
         tx_peers: mpsc::Sender<SocketAddrV4>,
+        logger: Arc<Logger>
     ) -> Result<(), ()> {
         let node_hash = Self::acquire_node_hash(&nodes).await.unwrap();
 
@@ -221,8 +225,9 @@ impl DhtPeerAcquirer {
         for _ in 0..num_workers {
             let bytes = get_peers_bytes.clone();
             let tx = tx_admin_message.clone();
+            let logger = logger.clone();
             tokio::spawn(async {
-                match Self::acquire_peers_inner(bytes, tx).await {
+                match Self::acquire_peers_inner(bytes, tx, logger).await {
                     Ok(_) => {}
                     Err(e) => {
                         log!("Got err: {}", e);
@@ -293,6 +298,7 @@ impl DhtPeerAcquirer {
     async fn acquire_peers_inner(
         msg_bytes: Arc<Vec<u8>>,
         tx_admin_message: mpsc::Sender<messages::AdminMessage>,
+        logger: Arc<Logger>
     ) -> Result<(), Box<dyn std::error::Error>> {
         loop {
             let (tx, rx) = oneshot::channel();
@@ -321,10 +327,13 @@ impl DhtPeerAcquirer {
                 match MagnetMessage::<GetPeersResponse>::from_bencode(&resp) {
                     Ok(v) => v.payload,
                     Err(e) => {
+                        logger.error(&resp);
                         log_err!("Error parsing response: {}", e.to_string());
                         continue;
                     }
                 };
+            
+            logger.trace(&resp);
 
             let (tx, rx) = oneshot::channel();
             let _ = tx_admin_message

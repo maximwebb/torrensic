@@ -3,6 +3,7 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 use byteorder::{BigEndian, ReadBytesExt};
 
 pub mod ring_buffer;
+pub mod logger;
 
 #[macro_export]
 macro_rules! log {

@@ -1,19 +1,17 @@
-use std::time::Duration;
+use std::{io::ErrorKind, sync::Arc, time::Duration};
 
 use bendy::decoding::FromBencode;
 use tokio::{
     io,
-    sync::mpsc,
-    time::{sleep, timeout},
+    time::timeout,
 };
 
 use crate::{
     log, log_err, log_warn,
     parser::file_info::FileInfo,
-    setup::{magnet_link::InfoHash, PeerAcquirerEnum},
+    setup::{PeerAcquirerEnum, magnet_link::InfoHash}, utils::logger::Logger,
 };
 
-use super::PeerAcquirer;
 
 use messages::{serialise_magnet_msg, MetadataHandshake, MetadataRequest, MetadataResponse};
 use socket_handler::MagnetSocketHandler;
@@ -23,11 +21,12 @@ mod socket_handler;
 
 pub struct MagnetTorrentInfoAcquirer {
     info_hash: InfoHash,
+    logger: Arc<Logger>,
 }
 
 impl MagnetTorrentInfoAcquirer {
-    pub fn new(info_hash: InfoHash) -> Self {
-        Self { info_hash }
+    pub fn new(info_hash: InfoHash, logger: &Arc<Logger>) -> Self {
+        Self { info_hash, logger: logger.clone() }
     }
 
     pub async fn get_torrent_info(
@@ -67,6 +66,7 @@ impl MagnetTorrentInfoAcquirer {
 
                 let Ok(ext_handshake) = MetadataHandshake::from_bencode(&ext_handshake_resp_bytes)
                 else {
+                    self.logger.error(&ext_handshake_resp_bytes);
                     log_warn!(
                         "Failed to parse extension handshake response: {}",
                         String::from_utf8_lossy(&ext_handshake_resp_bytes)
@@ -101,6 +101,9 @@ impl MagnetTorrentInfoAcquirer {
                             Ok(Ok(v)) => v,
                             Ok(Err(e)) => {
                                 log_err!("Got error: {e:?}");
+                                if e.kind() == ErrorKind::UnexpectedEof {
+                                    break;
+                                }
                                 continue;
                             }
                             Err(_) => {

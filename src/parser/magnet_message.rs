@@ -206,8 +206,8 @@ impl FromBencode for Endpoint {
                     let raw = val.try_into_bytes()?;
                     let mut ip_raw = &raw[..4];
                     let mut port_raw = &raw[4..6];
-                    ip = Some(ip_raw.read_u32::<BigEndian>()?);
-                    port = Some(port_raw.read_u16::<BigEndian>()?);
+                    ip = Some(ip_raw.read_u32::<BigEndian>().map_err(|e| bendy::decoding::Error::malformed_content(e))?);
+                    port = Some(port_raw.read_u16::<BigEndian>().map_err(|e| bendy::decoding::Error::malformed_content(e))?);
                 }
                 _ => continue,
             }

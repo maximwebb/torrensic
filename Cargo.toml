@@ -6,8 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-async-trait = "0.1.89"
-bendy = "0.3.3"
+async-trait = "^0.1.85"
+bendy = { git = "https://github.com/maximwebb/bendy" }
 bitvec = "1.0.1"
 byteorder = "1.4.3"
 colored = "2.1.0"

@@ -206,8 +206,8 @@ impl FromBencode for Endpoint {
                     let raw = val.try_into_bytes()?;
                     let mut ip_raw = &raw[..4];
                     let mut port_raw = &raw[4..6];
-                    ip = Some(ip_raw.read_u32::<BigEndian>()?);
-                    port = Some(port_raw.read_u16::<BigEndian>()?);
+                    ip = Some(ip_raw.read_u32::<BigEndian>().map_err(|e| bendy::decoding::Error::malformed_content(e))?);
+                    port = Some(port_raw.read_u16::<BigEndian>().map_err(|e| bendy::decoding::Error::malformed_content(e))?);
                 }
                 _ => continue,
             }
@@ -414,4 +414,22 @@ impl MetadataResponse {
 }
 
 #[cfg(test)]
-mod test {}
+mod test {
+    use std::io::{BufRead, Read};
+
+    use super::*;
+
+
+    #[test]
+    pub fn should_parse_ext_handshake_resp() {
+        let bytes = std::fs::read("log/Error/binary.log").unwrap();
+
+        for line in bytes.split(|&v| v == b'\n') {
+            let res = MetadataHandshake::from_bencode(line);
+            if res.is_err() {
+                println!("{:?}", res.unwrap_err());
+            }
+        }
+        
+    }
+}

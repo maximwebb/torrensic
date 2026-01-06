@@ -9,18 +9,13 @@ use std::{net::SocketAddrV4, str::FromStr, sync::Arc};
 
 use builder::file_builder;
 
-use crate::setup::{
-    dht_peer_acquirer::DhtPeerAcquirer, magnet_link::MagnetLink,
-    magnet_torrent_info_acquirer::MagnetTorrentInfoAcquirer,
-    tracker_peer_acquirer::TrackerPeerAcquirer, PeerAcquirer, PeerAcquirerEnum,
-};
+use crate::{setup::{
+    PeerAcquirer, PeerAcquirerEnum, dht_peer_acquirer::DhtPeerAcquirer, magnet_link::MagnetLink, magnet_torrent_info_acquirer::MagnetTorrentInfoAcquirer, tracker_peer_acquirer::TrackerPeerAcquirer
+}, utils::logger::{LogLevel, Logger}};
 
 /*
     TODO for next time:
-    - [x] Add richer parsing from Magnet links (create MagnetLink struct with optional name/tracker fields)
-    - [x] Automatically determine peer acquisition method based on this
-    - [ ] Add custom parser for unordered bencoded dicts
-    - [ ] Update tracker peer acquirer to act as iterator (i.e. don't keep trying the same tracker over and over - and also filter out all-0 IP addresses)
+    - [ ] Add custom parser for unordered bencoded dicts <--- PRIORITY # 1!! (Can use test case in messages.rs)
 */
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -34,6 +29,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let magnet_link = String::from("magnet:?xt=urn:btih:4a6b46d36598207dcd863153b112d149e13143da"); // wordle
     let output_dir = String::from("downloads");
 
+    let logger = Arc::new(Logger::new("log", LogLevel::Error));
+    logger.info(b"asdf");
+
     let magnet_link_str = String::from("magnet:?xt=urn:btih:D1AD4F4CCCC44E6227283BD334487E777EB88EDC&dn=American.Psycho.2000.Remastered.1080p.BluRay.X264.AC3.Wi&tr=http%3A%2F%2Fp4p.arenabg.com%3A1337%2Fannounce&tr=udp%3A%2F%2F47.ip-51-68-199.eu%3A6969%2Fannounce&tr=udp%3A%2F%2F9.rarbg.me%3A2780%2Fannounce&tr=udp%3A%2F%2F9.rarbg.to%3A2710%2Fannounce&tr=udp%3A%2F%2F9.rarbg.to%3A2730%2Fannounce&tr=udp%3A%2F%2F9.rarbg.to%3A2920%2Fannounce&tr=udp%3A%2F%2Fopen.stealth.si%3A80%2Fannounce&tr=udp%3A%2F%2Fopentracker.i2p.rocks%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.coppersurfer.tk%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.cyberia.is%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.dler.org%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.internetwarriors.net%3A1337%2Fannounce&tr=udp%3A%2F%2Ftracker.leechers-paradise.org%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.openbittorrent.com%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337&tr=udp%3A%2F%2Ftracker.pirateparty.gr%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.tiny-vps.com%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.torrent.eu.org%3A451%2Fannounce");
     let magnet_link = MagnetLink::from_str(&magnet_link_str)?;
 
@@ -41,8 +39,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         log!("Acquiring metadata for {name}");
     }
 
-    let mut peer_acquirer = if magnet_link.trackers.is_empty() {
-        PeerAcquirerEnum::Dht(DhtPeerAcquirer::new(magnet_link.info_hash.clone()))
+    let mut peer_acquirer = if magnet_link.trackers.is_empty() || true {
+        PeerAcquirerEnum::Dht(DhtPeerAcquirer::new(magnet_link.info_hash.clone(), &logger))
     } else {
         // let mut peer_acquirer = StaticPeerAcquirer::new(vec!["127.0.0.1:51413".parse().unwrap()]);
         PeerAcquirerEnum::Tracker(TrackerPeerAcquirer::new(
@@ -51,7 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ))
     };
 
-    let torrent_info_acquirer = MagnetTorrentInfoAcquirer::new(magnet_link.info_hash.clone());
+    let torrent_info_acquirer = MagnetTorrentInfoAcquirer::new(magnet_link.info_hash.clone(), &logger);
 
     let torrent_info = torrent_info_acquirer
         .get_torrent_info(&mut peer_acquirer)

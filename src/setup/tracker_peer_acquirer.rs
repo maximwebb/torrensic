@@ -97,7 +97,7 @@ impl TrackerPeerAcquirer {
             .bytes()
             .await?;
 
-        let tracker_info = TrackerInfo::from_bencode(&res).map_err(|e| {
+        let tracker_info = TrackerInfo::from_bencode(&res).map_err(|_e| {
             std::io::Error::new(ErrorKind::InvalidInput, "Failed to parse tracker response")
         })?;
 

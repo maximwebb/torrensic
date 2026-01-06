@@ -2,28 +2,28 @@ use std::{io::ErrorKind, ops::Deref, str::FromStr};
 
 #[derive(Clone, Debug)]
 pub struct InfoHash {
-    hash: [u8; 40],
+    hash: [u8; 20],
 }
 
 impl InfoHash {
-    pub fn try_new(s: &str) -> Result<Self, std::io::Error> {
+    pub fn try_new_from_str(s: &str) -> Result<Self, std::io::Error> {
         if s.len() != 40 {
             return Err(std::io::Error::new(
                 ErrorKind::InvalidInput,
-                format!("Info hash must be 40 bytes: got {s} ({} bytes)", s.len()),
+                format!("Info hash must be 20 bytes: got {s} ({} bytes)", s.len()/2),
             ));
         }
 
-        let hash = s.as_bytes().try_into().unwrap();
+        let hash = hex::decode(s).unwrap().try_into().unwrap();
 
         Ok(Self { hash })
     }
 
     pub fn try_new_from_bytes(bytes: &[u8]) -> Result<Self, std::io::Error> {
-        if bytes.len() != 40 {
+        if bytes.len() != 20 {
             return Err(std::io::Error::new(
                 ErrorKind::InvalidInput,
-                format!("Info hash must be 40 bytes: got {} bytes", bytes.len()),
+                format!("Info hash must be 20 bytes: got {} bytes", bytes.len()),
             ));
         }
 
@@ -77,7 +77,7 @@ impl FromStr for MagnetLink {
                     ));
                 }
 
-                info_hash = Some(InfoHash::try_new(&v[URN_PREFIX.len()..])?)
+                info_hash = Some(InfoHash::try_new_from_str(&v[URN_PREFIX.len()..])?)
             } else if k == "dn" {
                 name = Some(v.to_string());
             } else if k == "tr" {
@@ -98,5 +98,17 @@ impl FromStr for MagnetLink {
             name,
             trackers,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    pub fn parse_info_hash_correctly() {
+        let info_hash_str = "D1AD4F4CCCC44E6227283BD334487E777EB88EDC";
+        let info_hash = InfoHash::try_new_from_str(info_hash_str).ok();
+        assert!(info_hash.is_some());
     }
 }
